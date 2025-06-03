@@ -66,10 +66,7 @@ RSpec.describe Impressionist do
   describe '.process' do
     it 'processes an image and returns a ChunkyPNG::Image' do
       options = { quant_interval: 8 }
-      result = Impressionist.process(input_path, options)
-      img = result[:image]
-      expect(result).to have_key(:labels)
-      expect(result).to have_key(:blob_count)
+      img = Impressionist.process(input_path, options)
       expect(img).to be_a(ChunkyPNG::Image)
       # More detailed checks in .process_image specs
     end
@@ -98,10 +95,7 @@ RSpec.describe Impressionist do
       # So all pixels should be ChunkyPNG::Color.rgb(11, 21, 29)
 
       opts = { quant_interval: 16, min_blob_size: 0, connectivity: 4 }
-      result = Impressionist.process_image(quant_test_img, opts)
-      processed_img = result[:image]
-      expect(result).to have_key(:labels)
-      expect(result).to have_key(:blob_count)
+      processed_img = Impressionist.process_image(quant_test_img, opts)
 
       expected_color = ChunkyPNG::Color.rgb(11, 21, 29)
       expect(processed_img[0,0]).to eq(expected_color)
@@ -118,10 +112,7 @@ RSpec.describe Impressionist do
       blur_test_img[1,1] = ChunkyPNG::Color.rgb(90, 90, 90) # Center pixel bright
 
       opts = { blur: true, blur_radius: 1, quant_interval: 1, min_blob_size: 0 } # Quant 1 = no quantization effect
-      result = Impressionist.process_image(blur_test_img, opts)
-      processed_img = result[:image]
-      expect(result).to have_key(:labels)
-      expect(result).to have_key(:blob_count)
+      processed_img = Impressionist.process_image(blur_test_img, opts)
 
       # After blur, center pixel (1,1) should be average of 3x3 neighborhood.
       # (90+0*8)/9 = 10. All pixels will be (10,10,10)
@@ -144,10 +135,7 @@ RSpec.describe Impressionist do
       # min_blob_size=2 means the 1-pixel blob of S should be merged.
       # It will merge to L. So all pixels become L's average color.
       opts = { quant_interval: 1, min_blob_size: 2, connectivity: 4 }
-      result = Impressionist.process_image(img, opts)
-      processed_img = result[:image]
-      expect(result).to have_key(:labels)
-      expect(result).to have_key(:blob_count)
+      processed_img = Impressionist.process_image(img, opts)
 
       # Original L pixels were (200,0,0). Original S pixel was (0,200,0).
       # After merge, all 3 pixels belong to the same blob.
