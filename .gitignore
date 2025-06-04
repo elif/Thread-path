@@ -1,0 +1,9 @@
+# Ignore bundler local vendor directory
+vendor/bundle/
+# Ignore bundler user home if created locally
+.bundle_user_home/
+# Ignore other common Ruby/Rails temporary files
+tmp/
+log/
+*.gem
+.bundle/

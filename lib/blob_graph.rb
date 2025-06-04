@@ -1,12 +1,13 @@
 require 'set'
+require_relative 'blob_graph_matzeye' # Changed from blob_graph_opencv
 
 module BlobGraph
   class << self
     # Public method to extract blob graph from a pre-labeled image.
     def extract_from_labels(labels, options = {})
       implementation = options.fetch(:implementation, :ruby) # Default to :ruby
-      if implementation == :opencv
-        BlobGraph::OpenCV.extract_from_labels(labels, options)
+      if implementation == :matzeye # Changed from :opencv
+        BlobGraph::MatzEye.extract_from_labels(labels, options)
       else # :ruby or any other value defaults to original
         _ruby_extract_from_labels(labels, options)
       end
@@ -446,17 +447,4 @@ module BlobGraph
       end
     end # end UnionFind
   end # End of class << self
-
-  module OpenCV
-    class << self
-      def extract_from_labels(labels, options)
-        # Placeholder implementation for OpenCV
-        {
-          vertices: {},
-          edges: [],
-          detailed_edges: []
-        }
-      end
-    end
-  end # End of module OpenCV
 end # End of module BlobGraph

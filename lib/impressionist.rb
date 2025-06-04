@@ -1,6 +1,7 @@
 require 'chunky_png'
 require 'set'
 require 'fileutils' # Added for FileUtils.mkdir_p
+require_relative 'impressionist_matzeye' # Changed from impressionist_opencv
 
 module Impressionist
   VERSION = '1.1.0'
@@ -16,8 +17,8 @@ module Impressionist
 
     def process(input_path, options = {})
       img = load_image(input_path)
-      if options[:implementation] == :opencv
-        Impressionist::OpenCV.process_image(img, options)
+      if options[:implementation] == :matzeye # Changed from :opencv
+        Impressionist::MatzEye.process_image(img, options)
       else
         # Default to chunky_png or if :implementation is :chunky_png or not specified
         process_image(img, options)
@@ -341,19 +342,6 @@ end
           @parent[root_y] = root_x
           @rank[root_x] += 1
         end
-      end
-    end
-  end
-
-  module OpenCV
-    class << self
-      def process_image(img, options)
-        # Placeholder implementation for OpenCV
-        {
-          image: "opencv_image_placeholder",
-          labels: nil,
-          blob_count: 0
-        }
       end
     end
   end

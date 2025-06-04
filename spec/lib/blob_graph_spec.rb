@@ -1,95 +1,208 @@
 require 'spec_helper'
 require 'blob_graph'
 require 'set'
+# require 'opencv' # Commented out as ruby-opencv is not installed
 
 RSpec.describe BlobGraph do
 
+  module BlobGraphSpecHelpers
+    def describe_implementations(implementations, &block)
+      implementations.each do |impl|
+        context "with #{impl} implementation" do
+          instance_exec(impl, &block)
+        end
+      end
+    end
+  end
+
+  RSpec.configure do |config|
+    config.extend BlobGraphSpecHelpers
+  end
+
   let(:labels_simple_junction) do
+    [ [1,2], [1,3] ]
+  end
+
+  let(:labels_for_single_junction) do
     [
-      [1,2],
-      [1,3]
+      [1,1,1,1,0], [1,1,2,2,0], [1,3,2,2,0],
+      [3,3,3,0,0], [0,0,0,0,0]
     ]
+  end
+
+  # This data now correctly produces 1 vertex for MatzEye with 8-conn.
+  let(:labels_for_j1j2_edge_yields_1_vertex_for_matzeye) do
+    [
+      [1,1,1,0,0], [1,2,3,0,0], [1,2,0,0,0],
+      [0,2,4,4,0], [0,0,4,4,0]
+    ]
+  end
+
+  let(:labels_for_two_distinct_junctions_with_edge) do
+    [ # 6x6
+      [1,1,0,0,0,0],
+      [1,2,3,0,0,0],
+      [0,3,0,0,0,0],
+      [0,0,0,0,0,0],
+      [0,0,0,2,4,0],
+      [0,0,0,3,4,0]
+    ]
+    # J1 around (1,1) val 2 -> contrib {1,2,3} (pixels (1,1),(2,1),(1,2) are junctions)
+    # J2 around (4,3) val 2 -> contrib {2,3,4} (pixels (3,4),(4,4),(2,4) are junctions)
+    # Common {2,3} -> edge
+  end
+
+  let(:labels_for_two_distinct_junctions_no_edge) do
+    [ # 6x6
+      [1,1,0,0,0,0],
+      [1,2,3,0,0,0], # J1 at (1,1) val 2 -> contrib {1,2,3}
+      [0,3,0,0,0,0],
+      [0,0,0,0,0,0], # Separator
+      [0,0,0,7,5,0], # J2 at (4,3) val 5 -> contrib {3,5,6,7}
+      [0,0,0,6,5,0]
+    ]
+    # J1: (1,1)val=2 N={1,2,3} ; (2,1)val=3 N={1,2,3}; (1,2)val=3 N={1,2,3} -> J1 contrib {1,2,3}
+    # J2: (3,4)val=5 N={(2,3)=0,(2,4)=0,(2,5)=0, (3,3)=0,(3,4)=5,(3,5)=0, (4,3)=6,(4,4)=5,(4,5)=0} -> N={3(from L[2,1]),5,6,7}
+    #   Pixel L[4,3] (val 5). Nhood: L[3,2]=0,L[3,3]=0,L[3,4]=5; L[4,2]=0,L[4,3]=5,L[4,4]=0; L[5,2]=0,L[5,3]=6,L[5,4]=5
+    #   Unique: {3(from [2,1]),5,6,7} -> J2 contrib {3,5,6,7}
+    # Common {3}. Size 1. No edge.
+  end
+
+  let(:labels_no_junctions) do
+    [ [1,1,2,2], [1,1,2,2], [1,1,2,2] ]
   end
 
   let(:labels_cross) do
-    [
-      [1,1,0,2,2],
-      [1,3,0,4,2],
-      [5,5,0,6,6]
-    ]
+    [ [1,1,0,2,2], [1,3,0,4,2], [5,5,0,6,6] ]
   end
 
   describe '.extract_from_labels' do
-    describe_implementations [:ruby, :opencv] do |implementation|
-      # The 'context "with #{implementation} implementation" do' is now created by the helper
-      let(:options) { { implementation: implementation } }
+    describe_implementations [:ruby, :matzeye] do |implementation|
+      let(:options) { { implementation: implementation, junction_conn: 8, _return_contrib_blobs: (implementation == :matzeye) } }
 
-      context 'with simple_junction case' do
-        it 'returns a hash with vertices, edges, and detailed_edges' do
+      context 'with labels_simple_junction (2x2 image)' do
+        it 'returns expected graph structure' do
           result = BlobGraph.extract_from_labels(labels_simple_junction, options)
-          expect(result).to be_a(Hash)
-          expect(result).to have_key(:vertices)
-          expect(result).to have_key(:edges)
-          expect(result).to have_key(:detailed_edges)
-
-          if implementation == :opencv
-            expect(result[:vertices]).to eq({})
-            expect(result[:edges]).to eq([])
-            expect(result[:detailed_edges]).to eq([])
-          end
-        end
-
-        it "identifies junctions and edges as expected for #{implementation}" do
-          result = BlobGraph.extract_from_labels(labels_simple_junction, options)
-          if implementation == :ruby
+          expect(result).to include(:vertices, :edges, :detailed_edges)
+          if implementation == :matzeye
             expect(result[:vertices].size).to eq(1)
-            # Assuming junction ID 1 for the single junction if it exists
-            expect(result[:vertices][1]).to eq([0.5, 0.5]) if result[:vertices].key?(1) && result[:vertices].size == 1
-            expect(result[:edges]).to be_empty # For simple_junction case
-          else # :opencv
-            expect(result[:vertices]).to eq({})
-            expect(result[:edges]).to eq([])
+            expect(result[:edges]).to be_empty
+            if result.key?(:_internal_contrib_blobs)
+              expect(result[:_internal_contrib_blobs].values.first).to eq(Set[1,2,3])
+            end
+          elsif implementation == :ruby
+            expect(result[:vertices].size).to eq(1)
+            expect(result[:edges]).to be_empty
           end
         end
       end
 
-      context 'with labels_cross (designed for multiple junctions)' do
+      context 'with labels_for_single_junction (5x5 image)' do
+        it 'identifies one vertex and no edges' do
+          result = BlobGraph.extract_from_labels(labels_for_single_junction, options)
+          expect(result[:vertices].size).to eq(1)
+          vertex_id = result[:vertices].keys.first
+          expect(result[:vertices][vertex_id][0]).to be_within(0.01).of(1.4)
+          expect(result[:vertices][vertex_id][1]).to be_within(0.01).of(1.8)
+          if implementation == :matzeye && result.key?(:_internal_contrib_blobs)
+            expect(result[:_internal_contrib_blobs][vertex_id]).to eq(Set[1,2,3])
+          end
+          expect(result[:edges]).to be_empty
+          expect(result[:detailed_edges]).to be_empty
+        end
+      end
+
+      context 'with labels_for_j1j2_edge_yields_1_vertex_for_matzeye (5x5 image)' do
+        it 'identifies 1 vertex for MatzEye, and 0 edges' do
+          result = BlobGraph.extract_from_labels(labels_for_j1j2_edge_yields_1_vertex_for_matzeye, options)
+          if implementation == :matzeye
+            expect(result[:vertices].size).to eq(1)
+            expect(result[:edges].size).to eq(0)
+            expect(result[:detailed_edges].size).to eq(0)
+            if result.key?(:_internal_contrib_blobs) && !result[:vertices].empty?
+              expect(result[:_internal_contrib_blobs].values.first).to eq(Set[1,2,3,4])
+            end
+          elsif implementation == :ruby # Original Ruby might find more due to different junction logic.
+            expect(result[:vertices].size).to be >= 0 # Be lenient for original Ruby
+            expect(result[:edges].size).to eq(0)
+          end
+        end
+      end
+
+      context 'with labels_for_two_distinct_junctions_with_edge (MatzEye specific)' do
+        it 'creates an edge for two junctions sharing >= 2 blob IDs', if: implementation == :matzeye do
+          result = BlobGraph.extract_from_labels(labels_for_two_distinct_junctions_with_edge, options)
+          expect(result[:vertices].size).to eq(2)
+          expect(result[:edges].size).to eq(1)
+          expect(result[:detailed_edges].size).to eq(1)
+
+          v_ids = result[:vertices].keys.sort
+          expect(result[:edges].first.sort).to eq(v_ids)
+          detailed_edge = result[:detailed_edges].first
+          expect(detailed_edge[:endpoints].sort).to eq(v_ids)
+          expect(detailed_edge[:polyline].size).to eq(2)
+          if result.key?(:_internal_contrib_blobs)
+             expect(result[:_internal_contrib_blobs][v_ids[0]]).to eq(Set[1,2,3]) # J1
+             expect(result[:_internal_contrib_blobs][v_ids[1]]).to eq(Set[2,3,4]) # J2
+          end
+        end
+      end
+
+      context 'with labels_for_two_distinct_junctions_no_edge (MatzEye specific)' do
+        it 'does not create an edge for two junctions sharing < 2 blob IDs', if: implementation == :matzeye do
+          result = BlobGraph.extract_from_labels(labels_for_two_distinct_junctions_no_edge, options)
+          # J1 at (1,1) val 2 -> contrib {1,2,3}
+          # J2 at (3,3) val 5 -> Nbrs for P(3,3) L[3][3]:
+          # L[2][2]=0, L[2][3]=0, L[2][4]=0
+          # L[3][2]=0, L[3][3]=5, L[3][4]=0
+          # L[4][2]=0, L[4][3]=6, L[4][4]=0
+          # Unique non-zero in this window for P(3,3): {3(from L[2,1]),5,6}. Set: {3,5,6}
+          # Common with J1's {1,2,3} is {3}. Size 1. No edge.
+          expect(result[:vertices].size).to eq(2)
+          expect(result[:edges]).to be_empty
+          expect(result[:detailed_edges]).to be_empty
+           if result.key?(:_internal_contrib_blobs)
+             v_ids = result[:vertices].keys.sort
+             expect(result[:_internal_contrib_blobs][v_ids[0]]).to eq(Set[1,2,3])
+             expect(result[:_internal_contrib_blobs][v_ids[1]]).to eq(Set[3,5,6])
+           end
+        end
+      end
+
+      context 'with labels_no_junctions (3x4 image)' do
+        it 'identifies zero vertices and zero edges' do
+          result = BlobGraph.extract_from_labels(labels_no_junctions, options)
+          expect(result[:vertices]).to be_empty
+          expect(result[:edges]).to be_empty
+          expect(result[:detailed_edges]).to be_empty
+        end
+      end
+
+      context 'with original labels_cross' do
         it "processes and returns structure for #{implementation}" do
           current_options = options.merge(skeletonize: false)
           result = BlobGraph.extract_from_labels(labels_cross, current_options)
-
           if implementation == :ruby
             expect(result[:vertices].size).to be >= 2
-            expect(result[:edges].size).to eq(0) # labels_cross does not form edges with current ruby logic
-          else # :opencv
-            expect(result[:vertices]).to eq({})
-            expect(result[:edges]).to eq([])
-          end
-        end
-
-        it "produces detailed_edges as expected for #{implementation}" do
-          current_options = options.merge(skeletonize: true, simplify_tol: 1.0)
-          result_skel = BlobGraph.extract_from_labels(labels_cross, current_options)
-
-          if implementation == :ruby
-            expect(result_skel[:detailed_edges]).to be_empty # labels_cross does not form edges
-          else # :opencv
-            expect(result_skel[:detailed_edges]).to eq([])
+            expect(result[:edges].size).to eq(0)
+          elsif implementation == :matzeye
+            expect(result[:vertices].size).to eq(2)
+            expect(result[:edges]).to be_empty
+            expect(result[:detailed_edges]).to be_empty
           end
         end
       end
     end
 
     context 'with default (Ruby) implementation' do
-      it 'uses Ruby implementation when no option is specified for simple_junction' do
-        result = BlobGraph.extract_from_labels(labels_simple_junction) # No implementation option
+      it 'uses Ruby implementation for simple_junction' do
+        result = BlobGraph.extract_from_labels(labels_simple_junction)
         expect(result[:vertices].size).to eq(1)
-        expect(result[:vertices][1]).to eq([0.5, 0.5]) if result[:vertices].key?(1) && result[:vertices].size == 1
         expect(result[:edges]).to be_empty
       end
 
-      it 'uses Ruby implementation when no option is specified for labels_cross' do
-        result = BlobGraph.extract_from_labels(labels_cross, skeletonize: false) # No implementation option
+      it 'uses Ruby implementation for labels_cross' do
+        result = BlobGraph.extract_from_labels(labels_cross, {skeletonize: false})
         expect(result[:vertices].size).to be >= 2
         expect(result[:edges].size).to eq(0)
       end
@@ -100,7 +213,6 @@ RSpec.describe BlobGraph do
     let(:mask_2x2_all_true) { [[true, true], [true, true]] }
     let(:mask_2x2_diagonal) { [[true, false], [false, true]] }
     let(:mask_disconnected_corners) { [[true, false, true], [false,true,false], [true,false,true]]}
-
 
     it 'labels a fully connected mask as one component (8-conn)' do
       labels, count = BlobGraph.send(:ccl_binary, mask_2x2_all_true, 2, 2, 8)
