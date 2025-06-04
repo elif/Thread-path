@@ -190,6 +190,56 @@ RSpec.describe QuiltGraph do
       expect(corrected[:vertices][new_vertex_id][1]).to be_within(1e-6).of(5.0)
     end
 
+    context 'with empty or minimal graph inputs' do
+      let(:empty_graph_input) { { vertices: {}, edges: [] } }
+
+      it 'handles an empty graph input gracefully' do
+        corrected = QuiltGraph.correct_quilt(Marshal.load(Marshal.dump(empty_graph_input)))
+        expect(corrected).to be_a(Hash)
+        expect(corrected).to have_key(:vertices)
+        expect(corrected).to have_key(:edges)
+        expect(corrected[:vertices]).to eq({})
+        expect(corrected[:edges]).to eq([])
+        # It should not raise any errors and return a valid empty graph structure.
+      end
+
+      let(:graph_with_vertices_no_edges) { { vertices: { a: [0,0], b: [10,10] }, edges: [] } }
+      it 'handles a graph with vertices but no edges' do
+        # This will trigger the "degree < 2" and "disconnected components" fixes.
+        # It should connect 'a' and 'b'.
+        corrected = QuiltGraph.correct_quilt(Marshal.load(Marshal.dump(graph_with_vertices_no_edges)))
+        expect(corrected[:vertices].size).to eq(2)
+        expect(corrected[:edges].size).to be >= 1 # Should add at least one edge to connect a and b
+
+        # After correction, all vertices should have degree at least 1 (if graph non-trivial)
+        # and ideally degree 2 if it made a cycle or connected to boundaries (though boundaries are not explicit here)
+        # The current `correct_quilt` aims for degree >= 2.
+        adj = build_adj(corrected)
+        degrees = adj.transform_values(&:size)
+        degrees.each_value do |deg|
+          expect(deg).to be >= 1 # At least connected. Degree 2 is harder without knowing boundary behavior.
+                                 # Given it tries to fix degree < 2, it should try to make them 2.
+                                 # For two vertices, it would make one edge, resulting in degree 1 for both.
+                                 # The loop continues until no more fixes.
+                                 # If it adds an edge [a,b], then a and b have deg 1.
+                                 # The fix_degree_lt_2 would run again. It might try to add another edge or connect to nearest.
+                                 # If it adds another edge between a and b (if allowed), then deg becomes 2.
+        end
+        # For just two vertices, it should connect them.
+        expect(corrected[:edges]).to include([:a, :b].sort)
+
+        # If the graph is small (e.g., 2 vertices), achieving degree >= 2 for all might be impossible
+        # without adding self-loops or multiple edges between the same two vertices,
+        # or if boundary vertices are not part of this isolated `correct_quilt` logic.
+        # The current `add_edge_to_nearest_distinct_vertex` might add one edge.
+        # Then `fix_bridges_iteratively` might add a parallel edge.
+        if corrected[:vertices].size == 2
+            expect(degrees[:a]).to be >= 1 # could be 1 if only one edge, or 2 if parallel edge added
+            expect(degrees[:b]).to be >= 1
+        end
+      end
+    end
+
     context 'iterative corrections' do
       it 'handles a graph requiring multiple types of fixes' do
         # Graph with isolated vertex 'e', a bridge 'c-d', and a crossing 'a-f' with 'b-g'

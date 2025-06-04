@@ -64,14 +64,42 @@ RSpec.describe Impressionist do
   end
 
   describe '.process' do
-    it 'processes an image and returns a ChunkyPNG::Image' do
-      options = { quant_interval: 8 }
-      result = Impressionist.process(input_path, options)
-      img = result[:image]
-      expect(result).to have_key(:labels)
-      expect(result).to have_key(:blob_count)
-      expect(img).to be_a(ChunkyPNG::Image)
-      # More detailed checks in .process_image specs
+    let(:options) { { quant_interval: 8 } }
+
+    describe_implementations [:chunky_png, :opencv] do |implementation|
+      # The 'context "with #{implementation} implementation" do' is now created by the helper
+      it "processes an image and returns the expected structure for #{implementation}" do
+        run_options = options.merge(implementation: implementation)
+        result = Impressionist.process(input_path, run_options)
+
+        expect(result).to have_key(:image)
+        expect(result).to have_key(:labels)
+        expect(result).to have_key(:blob_count)
+
+        if implementation == :opencv
+          expect(result[:image]).to eq("opencv_image_placeholder")
+          expect(result[:labels]).to be_nil
+          expect(result[:blob_count]).to eq(0)
+        else # :chunky_png (default)
+          expect(result[:image]).to be_a(ChunkyPNG::Image)
+          # For chunky_png, we could also check that labels is an Array and blob_count is an Integer
+          # but the main functionality is tested more deeply in .process_image specs
+          expect(result[:labels]).to be_an(Array) # Basic check
+          expect(result[:blob_count]).to be_an(Integer) # Basic check
+        end
+      end
+    end
+
+    # Test default behavior (chunky_png) when no implementation is specified
+    context "with default (chunky_png) implementation" do
+      it 'processes an image and returns a ChunkyPNG::Image based result' do
+        result = Impressionist.process(input_path, options) # No implementation specified
+        expect(result[:image]).to be_a(ChunkyPNG::Image)
+        expect(result).to have_key(:labels)
+        expect(result).to have_key(:blob_count)
+        expect(result[:labels]).to be_an(Array)
+        expect(result[:blob_count]).to be_an(Integer)
+      end
     end
   end
 

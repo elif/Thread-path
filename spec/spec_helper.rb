@@ -41,6 +41,21 @@ RSpec.configure do |config|
     mocks.verify_partial_doubles = true
   end
 
+  # Helper for describing tests for multiple implementations
+  module ImplementationHelper
+    def describe_implementations(implementations_array, &block)
+      implementations_array.each do |implementation_name|
+        context "with #{implementation_name} implementation" do
+          # Pass the implementation name to the block, which can then use it
+          # to set options or expectations accordingly.
+          block.call(implementation_name)
+        end
+      end
+    end
+  end
+
+  config.extend ImplementationHelper
+
   # This option will default to `:apply_to_host_groups` in RSpec 4 (and will
   # have no way to turn it off -- the option exists only for backwards
   # compatibility in RSpec 3). It causes shared context metadata to be

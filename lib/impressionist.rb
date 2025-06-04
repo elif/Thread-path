@@ -16,7 +16,12 @@ module Impressionist
 
     def process(input_path, options = {})
       img = load_image(input_path)
-      process_image(img, options) # process_image returns hash, .process will now also return hash
+      if options[:implementation] == :opencv
+        Impressionist::OpenCV.process_image(img, options)
+      else
+        # Default to chunky_png or if :implementation is :chunky_png or not specified
+        process_image(img, options)
+      end
     end
 
     def load_image(path)
@@ -336,6 +341,19 @@ end
           @parent[root_y] = root_x
           @rank[root_x] += 1
         end
+      end
+    end
+  end
+
+  module OpenCV
+    class << self
+      def process_image(img, options)
+        # Placeholder implementation for OpenCV
+        {
+          image: "opencv_image_placeholder",
+          labels: nil,
+          blob_count: 0
+        }
       end
     end
   end
