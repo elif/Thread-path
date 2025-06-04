@@ -1,19 +1,3 @@
-# app.rb
-#
-# Sinatra application that guides the user through three steps:
-#  1. Upload a PNG and apply “impressionist” blob recoloring (using Impressionist).
-#  2. Extract a blob‐adjacency graph from the labeled image (using BlobGraph) and render it as SVG.
-#  3. Smooth/validate the graph into a quilt‐legal planar graph (using QuiltGraph) and render final SVG.
-#
-# At each step, the user sees the result and can adjust options before proceeding.
-#
-# Directory structure:
-#   tmp/   -- stores per‐session subfolders containing intermediate images, labels, and SVGs.
-#
-# Dependencies:
-#   gem install sinatra chunky_png
-#   (Ensure lib/impressionist.rb, lib/blob_graph.rb, lib/quilt_graph.rb are in the same folder)
-#
 require 'sinatra'
 require 'securerandom'
 require 'fileutils'

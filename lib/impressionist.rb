@@ -1,38 +1,3 @@
-# lib/impressionist.rb
-#
-# A pure-Ruby library for “impressionist” blob detection and recoloring of PNG images,
-# now with enhanced control over blob size and noise.
-#
-# Features:
-#   • Optional box-blur to reduce noise.
-#   • Fixed-interval color quantization.
-#   • Two-pass connected-component labeling (4- or 8-connectivity).
-#   • Optional filtering of small blobs (min_blob_size).
-#   • Computes average RGB per blob and recolors entire blob to its average hue.
-#   • Clean API: load, process, and save.
-#
-# Dependencies:
-#   gem install chunky_png
-#
-# Usage Example:
-#   require_relative 'lib/impressionist'
-#
-#   options = {
-#     quant_interval: 16,
-#     blur:           true,
-#     blur_radius:    1,
-#     connectivity:   4,
-#     min_blob_size:  50
-#   }
-#
-#   # Recolor input.png → output.png
-#   Impressionist.recolor('input.png', 'output.png', options)
-#
-#   # Or get a Hash {image:, labels:, blob_count:} back instead of saving directly:
-#   result = Impressionist.process('input.png', options)
-#   result[:image].save('out.png')
-#
-
 require 'chunky_png'
 require 'set'
 require 'fileutils' # Added for FileUtils.mkdir_p
@@ -53,10 +18,6 @@ module Impressionist
       img = load_image(input_path)
       process_image(img, options) # process_image returns hash, .process will now also return hash
     end
-
-    # No longer making these private for app.rb, but refactoring app.rb to use .process is better.
-    # For now, keeping them public as they were.
-    # public # This was from original, but if app.rb changes, these can be private again via `module_function` or similar.
 
     def load_image(path)
       raise ArgumentError, "File not found: #{path}" unless File.exist?(path)
