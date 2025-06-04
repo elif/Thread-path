@@ -1,13 +1,3 @@
-# lib/quilt_graph.rb
-#
-# Module containing all graph logic for parsing an SVG into a quilt-graph,
-# correcting it into a viable quilt diagram, and exporting back to SVG.
-#
-# Since the Sinatra app already has a planar graph (vertices & edges),
-# we only need correct_quilt and graph_to_svg_string here.
-#
-# Dependencies: None beyond Ruby stdlib.
-#
 require 'set'
 
 module QuiltGraph
