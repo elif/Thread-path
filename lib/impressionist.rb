@@ -2,6 +2,7 @@ require 'chunky_png'
 require 'set'
 require 'fileutils' # Added for FileUtils.mkdir_p
 require_relative 'impressionist_matzeye_adapter' # Changed from impressionist_matzeye
+require_relative 'impressionist_palette_quantize_adapter'
 
 module Impressionist
   VERSION = '1.1.0'
@@ -15,17 +16,31 @@ module Impressionist
       true
     end
 
-    def process(input_path, options = {})
-      img = load_image(input_path)
-      if options[:implementation] == :matzeye # Implementation key remains :matzeye
-        Impressionist::MatzEyeAdapter.process_image(img, options) # Call the Adapter
+    def process(input_or_path, options = {})
+      img = if input_or_path.is_a?(ChunkyPNG::Image)
+              input_or_path
+            else
+              load_image(input_or_path)
+            end
+
+      implementation = options.fetch(:implementation, :chunky_png).to_sym
+
+      case implementation
+      when :matzeye
+        Impressionist::MatzEyeAdapter.process_image(img, options)
+      when :palette_quantize
+        Impressionist::PaletteQuantizeAdapter.process_image(img, options)
+      when :chunky_png
+        # Default to chunky_png (original process_image method)
+        process_image(img, options) # This refers to the original pure Ruby process_image
       else
-        # Default to chunky_png or if :implementation is :chunky_png or not specified
-        process_image(img, options)
+        raise ArgumentError, "Unsupported implementation: #{implementation}. Supported are :chunky_png, :matzeye, :palette_quantize."
       end
     end
 
     def load_image(path)
+      # Path validation for string input
+      raise ArgumentError, "Input path must be a string." unless path.is_a?(String)
       raise ArgumentError, "File not found: #{path}" unless File.exist?(path)
       ChunkyPNG::Image.from_file(path)
     end
@@ -344,5 +359,40 @@ end
         end
       end
     end
+  end
+
+  # Define available implementations
+  def self.available_implementations
+    implementations = [:chunky_png]
+    implementations << :matzeye if const_defined?(:MatzEyeAdapter)
+    implementations << :palette_quantize if const_defined?(:PaletteQuantizeAdapter)
+    implementations
+  end
+
+  # Define default options for each implementation
+  def self.default_options
+    {
+      chunky_png: {
+        quant_interval: 16,
+        blur: false,
+        blur_radius: 1,
+        connectivity: 4,
+        min_blob_size: 0
+        # These were in spec, let's ensure they are here or update spec.
+        # simplify_tolerance: 0.5, (Not directly used by process_image options)
+        # color_distance_threshold: 15, (Not directly used by process_image options)
+        # max_blob_area_ratio: 0.25 (Not directly used by process_image options)
+      },
+      matzeye: {
+        # MatzEyeAdapter specific defaults, if any, would go here.
+        # For now, let's assume it merges over chunky_png defaults or has its own.
+        # The spec expects an empty hash for matzeye defaults.
+      },
+      palette_quantize: {
+        palette_object: nil, # Must be provided
+        island_depth: 0,
+        island_threshold: 0
+      }
+    }
   end
 end

@@ -2,6 +2,7 @@ require 'spec_helper'
 require 'chunky_png'
 # require 'opencv' # Commented out as ruby-opencv is not installed
 require 'impressionist' # Assuming lib is in $LOAD_PATH via spec_helper
+require_relative '../../lib/impressionist_palette_quantize_adapter'
 
 # Helper to extend RSpec for describing implementations
 module ImpressionistSpecHelpers
@@ -34,28 +35,7 @@ unless Object.const_defined?('PaletteManager')
 end
 
 module Impressionist
-  # Placeholder for PaletteQuantizeAdapter
-  unless const_defined?('PaletteQuantizeAdapter')
-    module PaletteQuantizeAdapter
-      def self.process_image(image, options)
-        # Mocked response for TDD
-        processed_image = ChunkyPNG::Image.new(image.width, image.height, ChunkyPNG::Color::BLACK)
-        mock_labels = Array.new(image.height) { Array.new(image.width, 0) }
-        mock_blob_count = 0
-
-        if options[:palette_object] && !options[:palette_object].active_palette.empty?
-          # Simple mock: if red is in active palette, make first pixel red and count one blob.
-          # This helps verify options are passed and have some effect.
-          if options[:palette_object].active_palette.include?(ChunkyPNG::Color.rgb(255,0,0))
-            processed_image[0,0] = ChunkyPNG::Color.rgb(255,0,0) if image.width > 0 && image.height > 0
-            mock_labels[0][0] = 1 if image.height > 0 && image.width > 0
-            mock_blob_count = 1 if image.height > 0 && image.width > 0
-          end
-        end
-        { image: processed_image, labels: mock_labels, blob_count: mock_blob_count }
-      end
-    end
-  end
+  # Placeholder for PaletteQuantizeAdapter -- REMOVED
 end
 
 RSpec.describe Impressionist do
@@ -175,8 +155,8 @@ RSpec.describe Impressionist do
     end
 
     context "with :palette_quantize implementation" do
-      let(:implementation_type) { :palette_quantize }
-      let(:sample_input_image) { ChunkyPNG::Image.new(10, 10, ChunkyPNG::Color::WHITE) } # A bit larger for testing
+      let(:implementation_type) { :palette_quantize } # Variable used for clarity in this context
+      let(:sample_input_image) { ChunkyPNG::Image.new(10, 10, ChunkyPNG::Color::WHITE) }
 
       let(:mock_palette) do
         pm = PaletteManager.new
@@ -195,12 +175,14 @@ RSpec.describe Impressionist do
       end
 
       it 'processes an image and returns the expected structure' do
-        # Allow the original method to be called but spy on its arguments and return value
-        allow(Impressionist::PaletteQuantizeAdapter).to receive(:process_image).and_call_original.and_wrap_original do |original_method, image, opts|
-          expect(opts).to include(:palette_object)
-          expect(opts[:palette_object]).to be_a(PaletteManager)
-          original_method.call(image, opts)
-        end
+        # Now that we are calling the real adapter, the .and_call_original.and_wrap_original is less about
+        # testing the mock and more about ensuring Impressionist.process correctly invokes it.
+        # The direct call to Impressionist::PaletteQuantizeAdapter.process_image is what's being tested here.
+        # We can still check that Impressionist.process correctly passes arguments.
+
+        # Expect Impressionist.process to call our real adapter's process_image method
+        # We spy on it to ensure options are passed correctly, then let it execute.
+        expect(Impressionist::PaletteQuantizeAdapter).to receive(:process_image).with(sample_input_image, hash_including(palette_options)).and_call_original
 
         result = Impressionist.process(sample_input_image, palette_options)
 
