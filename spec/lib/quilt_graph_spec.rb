@@ -1,6 +1,7 @@
 require 'spec_helper'
 require 'quilt_graph' # Assumes lib is in $LOAD_PATH via spec_helper
 require 'set'
+require 'chunky_png' # For ChunkyPNG::Color
 
 RSpec.describe QuiltGraph do
 
@@ -336,6 +337,129 @@ RSpec.describe QuiltGraph do
     end
   end
 
+  describe '.correct_quilt with face identification' do
+    # Helper to initialize _next_id from vertex names like :v1, :v2
+    def initialize_graph_next_id(graph)
+      graph[:_next_id] ||= graph[:vertices].keys.map { |k|
+        k.to_s.gsub(/[^\d]/, '').to_i
+      }.select { |i| i > 0 }.max || 0
+    end
+
+    it 'identifies faces for a single square graph' do
+      graph_topology_data = {
+        vertices: { v1: [0,0], v2: [10,0], v3: [10,10], v4: [0,10] }, # Adjusted coords
+        edges: [[:v1,:v2], [:v2,:v3], [:v3,:v4], [:v4,:v1]].map { |e| e.sort }.uniq
+      }
+      initialize_graph_next_id(graph_topology_data) # Call on the hash that contains :vertices
+
+      # Mock labels and colors
+      mock_labels_matrix = Array.new(11) { Array.new(11, 2) } # Default to outer blob_id 2
+      mock_labels_matrix[5][5] = 1 # Ensure centroid (5,5) for inner square hits blob_id 1
+      mock_height = mock_labels_matrix.size
+      mock_width = mock_labels_matrix[0].size
+
+      red = ChunkyPNG::Color.rgb(255,0,0)
+      blue = ChunkyPNG::Color.rgb(0,0,255)
+      mock_avg_colors_map = [nil, red, blue] # avg_colors_map[0]=nil, avg_colors_map[1]=red, avg_colors_map[2]=blue
+
+      blob_graph_input_for_quilt = {
+        graph_topology: graph_topology_data,
+        source_segmentation: {
+          labels: mock_labels_matrix,
+          avg_colors: mock_avg_colors_map,
+          width: mock_width,
+          height: mock_height
+        }
+      }
+
+      corrected_quilt_graph = QuiltGraph.correct_quilt(blob_graph_input_for_quilt)
+
+      all_faces_data = corrected_quilt_graph[:faces].values
+      expect(all_faces_data.size).to eq(2), "Expected 2 faces, got #{corrected_quilt_graph[:faces].keys.size}. Faces: #{corrected_quilt_graph[:faces]}"
+
+      expected_verts_set = Set.new([:v1, :v2, :v3, :v4])
+      all_faces_data.each do |f_data|
+        expect(f_data).to be_a(Hash), "Face data should be a Hash {vertices: ..., color: ...}"
+        expect(Set.new(f_data[:vertices])).to eq(expected_verts_set)
+        expect(f_data[:vertices].size).to eq(4)
+      end
+
+      colors_found = all_faces_data.map { |f_data| f_data[:color] }.compact
+
+      expect(colors_found).to include(red), "Expected to find red color. Found: #{colors_found}"
+      expect(all_faces_data.count { |f_data| f_data[:color] == red }).to eq(1), "Expected 1 red face. Data: #{all_faces_data}"
+
+      # The other face should not be red. It could be blue or nil.
+      expect(all_faces_data.count { |f_data| f_data[:color] != red }).to eq(1)
+      # Optionally, be more specific if the outer face color is reliably determined by mock_labels_matrix[0][0] or similar
+      # For this setup, the outer face centroid is likely to hit (0,0) after clamping, which is blob_id 2 (blue).
+      # expect(all_faces_data.one? { |f_data| f_data[:color] == blue }).to be true
+    end
+
+    it 'identifies faces for two adjacent squares (domino shape)' do
+      graph_topology_data = {
+        vertices: {
+          v1: [0,10], v2: [10,10], v3: [10,0], v4: [0,0], # Left square
+          v5: [20,10], v6: [20,0]                         # Right extension
+        },
+        edges: [
+          [:v1,:v2], [:v2,:v3], [:v3,:v4], [:v4,:v1],
+          [:v2,:v5], [:v5,:v6], [:v6,:v3]
+        ].map { |e| e.sort }.uniq
+      }
+      initialize_graph_next_id(graph_topology_data)
+
+      mock_labels_matrix = Array.new(11) { Array.new(21, 3) } # Default to outer blob_id 3
+      (0..9).each do |y|; (0..9).each do |x|; mock_labels_matrix[y][x] = 1; end; end
+      (0..9).each do |y|; (11..19).each do |x|; mock_labels_matrix[y][x] = 2; end; end
+      mock_labels_matrix[5][5] = 1   # Centroid for v1,v2,v3,v4
+      mock_labels_matrix[5][15] = 2  # Centroid for v2,v5,v6,v3
+      # Centroid for outer face (approx 10,5) will hit mock_labels_matrix[5][10] = 3
+
+      mock_height = mock_labels_matrix.size
+      mock_width = mock_labels_matrix[0].size
+
+      red = ChunkyPNG::Color.rgb(255,0,0)
+      green = ChunkyPNG::Color.rgb(0,255,0)
+      blue = ChunkyPNG::Color.rgb(0,0,255)
+      mock_avg_colors_map = [nil, red, green, blue]
+
+      blob_graph_input_for_quilt = {
+        graph_topology: graph_topology_data,
+        source_segmentation: {
+          labels: mock_labels_matrix,
+          avg_colors: mock_avg_colors_map,
+          width: mock_width,
+          height: mock_height
+        }
+      }
+      corrected_quilt_graph = QuiltGraph.correct_quilt(blob_graph_input_for_quilt)
+
+      all_faces_data = corrected_quilt_graph[:faces].values
+      expect(all_faces_data.size).to eq(3), "Expected 3 faces. Got: #{corrected_quilt_graph[:faces].keys}"
+
+      expected_face1_verts = Set.new([:v1, :v2, :v3, :v4])
+      expected_face2_verts = Set.new([:v2, :v3, :v6, :v5])
+      expected_outer_face_verts = Set.new([:v1, :v4, :v3, :v6, :v5, :v2])
+
+      face1_data = all_faces_data.find { |fd| Set.new(fd[:vertices]) == expected_face1_verts }
+      face2_data = all_faces_data.find { |fd| Set.new(fd[:vertices]) == expected_face2_verts }
+      outer_face_data = all_faces_data.find { |fd| Set.new(fd[:vertices]) == expected_outer_face_verts }
+
+      expect(face1_data).not_to be_nil, "Face 1 not found"
+      expect(face1_data[:color]).to eq(red), "Face 1 color mismatch. Expected red, got #{face1_data[:color]}"
+      expect(face1_data[:vertices].size).to eq(4)
+
+      expect(face2_data).not_to be_nil, "Face 2 not found"
+      expect(face2_data[:color]).to eq(green), "Face 2 color mismatch. Expected green, got #{face2_data[:color]}"
+      expect(face2_data[:vertices].size).to eq(4)
+
+      expect(outer_face_data).not_to be_nil, "Outer face not found"
+      expect(outer_face_data[:color]).to eq(blue), "Outer face color mismatch. Expected blue, got #{outer_face_data[:color]}"
+      expect(outer_face_data[:vertices].size).to eq(6)
+    end
+  end
+
   # Consider adding focused tests for private methods like:
   # .find_connected_components, .connect_closest_components,
   # .find_bridges, .find_first_crossing, .split_edges_at_intersection,
@@ -343,7 +467,7 @@ RSpec.describe QuiltGraph do
   # if their behavior isn't fully clear from the .correct_quilt tests.
 end
 
-RSpec.describe QuiltGraph do
+RSpec.describe QuiltGraph do # This describe block was already here for .is_quilt_legal?
   describe '.is_quilt_legal?' do
     let(:triangle_graph) do # Valid: deg>=2, connected, no bridges, no crossings
       {

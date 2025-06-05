@@ -3,11 +3,26 @@ require 'set'
 module QuiltGraph
   # ----------------------------------------------------------------------------
   # Attempts to repair defects until the graph is a valid quilt.
-  def self.correct_quilt(graph)
-    # Ensure _next_id is initialized for adding new vertices
-    graph[:_next_id] ||= graph[:vertices].keys.map { |k| k.to_s.gsub(/[^\d]/, '').to_i }.max || 0
+  def self.correct_quilt(blob_graph_data)
+    # Extract graph topology, making deep copies to avoid modifying original input
+    graph_topology = blob_graph_data[:graph_topology] || {} # Ensure graph_topology exists
+    graph = {
+      vertices: graph_topology[:vertices] ? graph_topology[:vertices].dup : {},
+      edges:    graph_topology[:edges] ? graph_topology[:edges].map(&:dup) : []
+    }
 
-    max_iterations = graph[:vertices].size * 2 # Heuristic limit
+    # Initialize internal graph properties
+    graph[:_next_id] ||= graph[:vertices].keys.map { |k| k.to_s.gsub(/[^\d]/, '').to_i }.max || 0
+    graph[:_next_face_id] ||= 0
+    graph[:faces] ||= {}
+
+    # Extract source segmentation data for color processing
+    source_segmentation = blob_graph_data[:source_segmentation]
+    labels_matrix = source_segmentation ? source_segmentation[:labels] : nil
+    avg_colors_map = source_segmentation ? source_segmentation[:avg_colors] : nil
+
+    # Heuristic limit for iterations, ensure graph[:vertices] is not nil
+    max_iterations = graph[:vertices] ? graph[:vertices].size * 2 : 0
     iterations = 0
 
     loop do
@@ -54,6 +69,11 @@ module QuiltGraph
 
       break unless modified_in_pass # No fixes made in this pass, graph is stable
     end
+
+    _identify_faces(graph, labels_matrix, avg_colors_map)
+
+    # Merge the source_segmentation back into the final graph object
+    graph[:source_segmentation] = source_segmentation
     graph
   end
 
@@ -154,6 +174,163 @@ module QuiltGraph
   end
 
   private
+
+  def self._new_face_id(graph)
+    graph[:_next_face_id] += 1
+    :"F#{graph[:_next_face_id]}"
+  end
+
+  def self._sort_edges_by_angle(center_vid, all_incident_edges, graph)
+    center_coords = graph[:vertices][center_vid]
+    return [] unless center_coords
+
+    angles = []
+    all_incident_edges.each do |u, v|
+      neighbor_vid = (u == center_vid) ? v : u
+      # Edge case: if the edge is a loop (u == v), and u == center_vid, then neighbor_vid is also center_vid.
+      # This represents a self-loop. Depending on graph properties, this might be valid or not.
+      # For angle calculation, a self-loop doesn't have a well-defined angle in this context.
+      # We can choose to ignore it or handle it specially if the graph model allows self-loops.
+      # Assuming here that self-loops are not typical for face definition or should be filtered by caller.
+      next if neighbor_vid == center_vid
+
+      neighbor_coords = graph[:vertices][neighbor_vid]
+      next unless neighbor_coords # Skip if neighbor coords are missing for some reason
+
+      angle = Math.atan2(neighbor_coords[1] - center_coords[1], neighbor_coords[0] - center_coords[0])
+      angles << { id: neighbor_vid, angle: angle }
+    end
+
+    # Sort by angle. For ties in angle (collinear points),
+    # a secondary sort key (e.g., vertex ID) could make it deterministic,
+    # but is not strictly necessary for correctness of CCW traversal itself.
+    sorted_neighbors = angles.sort_by { |a| a[:angle] }.map { |a| a[:id] }
+
+    sorted_neighbors
+  end
+
+  def self._calculate_centroid(vertex_ids, all_vertices_coords)
+    return nil if vertex_ids.empty?
+    sum_x = 0.0
+    sum_y = 0.0
+    valid_vertices_count = 0
+    vertex_ids.each do |vid|
+      coords = all_vertices_coords[vid]
+      if coords
+        sum_x += coords[0]
+        sum_y += coords[1]
+        valid_vertices_count += 1
+      end
+    end
+    return nil if valid_vertices_count == 0
+    [sum_x / valid_vertices_count, sum_y / valid_vertices_count]
+  end
+
+  def self._identify_faces(graph, labels_matrix, avg_colors_map)
+    visited_directed_edges = Set.new # Stores [u, v] pairs
+    graph[:faces] ||= {} # Ensure faces hash exists, e.g. if method is called directly
+    graph[:_next_face_id] ||= 0 # Ensure counter is initialized
+
+    graph[:vertices].keys.each do |u_start_node|
+      # Get all incident edges for u_start_node to find potential starting edges for faces
+      # These edges must be actual pairs from graph[:edges] for _sort_edges_by_angle
+      incident_to_u_start = graph[:edges].select { |e_u, e_v| e_u == u_start_node || e_v == u_start_node }
+
+      # Sort these initial edges to have a consistent starting point for traversals from u_start_node
+      sorted_initial_neighbors = _sort_edges_by_angle(u_start_node, incident_to_u_start, graph)
+
+      sorted_initial_neighbors.each do |v_first_neighbor|
+        start_edge = [u_start_node, v_first_neighbor]
+
+        next if visited_directed_edges.include?(start_edge) # If this directed edge already processed
+
+        # Start of a new face traversal
+        new_face_id = _new_face_id(graph)
+        current_face_vertices = []
+
+        # Initialize traversal variables
+        # `curr_v` is the vertex we are currently at.
+        # `next_v` is the vertex we are moving to, along the edge (curr_v, next_v).
+        # `prev_v_in_path` is the vertex we came from to reach `curr_v`.
+        curr_v = u_start_node
+        next_v = v_first_neighbor
+
+        loop do
+          # Add the current vertex to the face path.
+          # Using `<< curr_v` is fine, duplicates won't occur if graph is simple and path is a cycle.
+          current_face_vertices << curr_v
+          visited_directed_edges.add([curr_v, next_v])
+
+          # Prepare for the next step: the current `next_v` becomes the new `curr_v`
+          # We need to find where to go from this new `curr_v` (which was old `next_v`)
+          # The vertex we just came from (old `curr_v`) will be `prev_v_for_sorting`
+
+          prev_v_for_sorting = curr_v # This is the vertex we arrived at `next_v` from
+          curr_v = next_v            # Move to the next vertex
+
+          # Find all edges incident to the new curr_v (which was next_v)
+          incident_to_curr_v = graph[:edges].select { |e_u, e_v| e_u == curr_v || e_v == curr_v }
+
+          # Sort neighbors of new curr_v by angle, relative to curr_v
+          sorted_neighbors_around_curr_v = _sort_edges_by_angle(curr_v, incident_to_curr_v, graph)
+
+          # Find prev_v_for_sorting in this sorted list.
+          # The edge (curr_v, prev_v_for_sorting) is the one we just traversed (in reverse).
+          # The next edge in CCW order for the face is the one *after* prev_v_for_sorting in this list.
+          idx_of_prev_v = sorted_neighbors_around_curr_v.index(prev_v_for_sorting)
+
+          # This should ideally not happen if graph is connected and edges are consistent.
+          # If prev_v_for_sorting is not a neighbor of curr_v, something is wrong.
+          break unless idx_of_prev_v
+
+          # Pick the next vertex in the sorted list (cyclically)
+          # This implements the "left turn" logic for CCW face traversal.
+          next_idx = (idx_of_prev_v + 1) % sorted_neighbors_around_curr_v.size
+          next_v = sorted_neighbors_around_curr_v[next_idx] # This is the new 'w' in (curr_v, w)
+
+          # Loop termination condition:
+          # Have we returned to the starting *vertex* of this face traversal AND
+          # are we about to traverse the starting *directed edge* again?
+          break if curr_v == u_start_node && next_v == v_first_neighbor
+
+          # Safety break if something goes wrong (e.g., edge case not handled, graph defect)
+          # This limit should be generous, e.g., number of vertices in the graph.
+          # current_face_vertices should not grow beyond the number of unique vertices in the graph
+          # for a simple cycle. If it does, it's likely an issue.
+          if current_face_vertices.size > graph[:vertices].size
+            # Optional: log a warning or error here
+            # STDERR.puts "Warning: Face traversal exceeded vertex count for face #{new_face_id}. Graph defect?"
+            break
+          end
+        end
+
+        # Store the completed face.
+        # A valid face in a planar graph usually has at least 3 vertices.
+        # However, the definition might depend on how graph handles e.g. bridges or cut vertices.
+        # Store the completed face.
+        face_color = nil
+        unless current_face_vertices.empty?
+          if labels_matrix && avg_colors_map
+            centroid = _calculate_centroid(current_face_vertices, graph[:vertices])
+            if centroid
+              px, py = centroid
+              # Clamp coordinates to be within matrix bounds
+              # labels_matrix is [rows][cols], so access is labels_matrix[y_idx][x_idx]
+              matrix_height = labels_matrix.size
+              matrix_width = labels_matrix[0].size # Assumes non-empty matrix
+
+              clamped_y = py.round.clamp(0, matrix_height - 1)
+              clamped_x = px.round.clamp(0, matrix_width - 1)
+
+              blob_id = labels_matrix[clamped_y][clamped_x]
+              face_color = avg_colors_map[blob_id] # Returns nil if blob_id not in map
+            end
+          end
+          graph[:faces][new_face_id] = { vertices: current_face_vertices, color: face_color }
+        end # else, if current_face_vertices is empty, do not store.
+      end
+    end
+  end
 
   def self.new_vertex_id(graph)
     graph[:_next_id] += 1

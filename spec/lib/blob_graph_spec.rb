@@ -4,6 +4,18 @@ require 'set'
 
 RSpec.describe BlobGraph do
 
+  # Helper to build mock segmentation data
+  def build_mock_segmentation_data(labels_matrix)
+    return nil if labels_matrix.nil? || labels_matrix.empty?
+    {
+      labels: labels_matrix,
+      avg_colors: [], # Mock, as BlobGraph doesn't directly use it for topology
+      blob_count: labels_matrix.flatten.max || 0,  # Mock blob_count based on max label
+      width: labels_matrix.first.size,
+      height: labels_matrix.size
+    }
+  end
+
   module BlobGraphSpecHelpers
     def describe_implementations(implementations, &block)
       implementations.each do |impl|
@@ -56,93 +68,125 @@ RSpec.describe BlobGraph do
       let(:options) { { implementation: implementation, junction_conn: 8, _return_contrib_blobs: (implementation == :matzeye) } }
 
       context 'with labels_simple_junction (2x2 image)' do
+        let(:seg_data) { build_mock_segmentation_data(labels_simple_junction) }
         it 'returns expected graph structure' do
-          result = BlobGraph.extract_from_labels(labels_simple_junction, options)
-          expect(result).to include(:vertices, :edges, :detailed_edges)
-          expect(result[:vertices].size).to eq(1)
-          expect(result[:edges]).to be_empty
-          if implementation == :matzeye && result.key?(:_internal_contrib_blobs)
-            expect(result[:_internal_contrib_blobs].values.first).to eq(Set[1,2,3])
+          result = BlobGraph.extract_from_labels(seg_data, options)
+
+          if implementation == :ruby
+            expect(result).to have_key(:graph_topology)
+            expect(result).to have_key(:source_segmentation)
+            expect(result[:source_segmentation][:labels]).to eq(labels_simple_junction)
+            graph_topo = result[:graph_topology]
+          else # :matzeye (adapter not updated yet, so structure might be old or fail)
+            graph_topo = result
+          end
+
+          expect(graph_topo).to include(:vertices, :edges, :detailed_edges)
+          expect(graph_topo[:vertices].size).to eq(1)
+          expect(graph_topo[:edges]).to be_empty
+          if implementation == :matzeye && graph_topo.key?(:_internal_contrib_blobs) # MatzEye specific check
+            expect(graph_topo[:_internal_contrib_blobs].values.first).to eq(Set[1,2,3])
           end
         end
       end
 
       context 'with labels_for_single_junction (5x5 image)' do
+        let(:seg_data) { build_mock_segmentation_data(labels_for_single_junction) }
         it 'identifies one vertex and no edges' do
-          result = BlobGraph.extract_from_labels(labels_for_single_junction, options)
-          expect(result[:vertices].size).to eq(1)
-          vertex_id = result[:vertices].keys.first
-          expect(result[:vertices][vertex_id][0]).to be_within(0.01).of(1.4)
-          expect(result[:vertices][vertex_id][1]).to be_within(0.01).of(1.8)
-          if implementation == :matzeye && result.key?(:_internal_contrib_blobs)
-            expect(result[:_internal_contrib_blobs][vertex_id]).to eq(Set[1,2,3])
+          result = BlobGraph.extract_from_labels(seg_data, options)
+          graph_topo = implementation == :ruby ? result[:graph_topology] : result
+
+          expect(graph_topo[:vertices].size).to eq(1)
+          vertex_id = graph_topo[:vertices].keys.first
+          expect(graph_topo[:vertices][vertex_id][0]).to be_within(0.01).of(1.4)
+          expect(graph_topo[:vertices][vertex_id][1]).to be_within(0.01).of(1.8)
+          if implementation == :matzeye && graph_topo.key?(:_internal_contrib_blobs)
+            expect(graph_topo[:_internal_contrib_blobs][vertex_id]).to eq(Set[1,2,3])
           end
-          expect(result[:edges]).to be_empty
+          expect(graph_topo[:edges]).to be_empty
+          if implementation == :ruby
+            expect(result[:source_segmentation][:labels]).to eq(labels_for_single_junction)
+          end
         end
       end
 
       context 'with labels_for_j1j2_edge_yields_1_vertex_for_matzeye (5x5 image)' do
+        let(:seg_data) { build_mock_segmentation_data(labels_for_j1j2_edge_yields_1_vertex_for_matzeye) }
         it 'identifies 1 vertex for MatzEye, and 0 edges' do
-          result = BlobGraph.extract_from_labels(labels_for_j1j2_edge_yields_1_vertex_for_matzeye, options)
+          result = BlobGraph.extract_from_labels(seg_data, options)
+          graph_topo = implementation == :ruby ? result[:graph_topology] : result
+
           if implementation == :matzeye
-            expect(result[:vertices].size).to eq(1)
-            expect(result[:edges].size).to eq(0)
-            if result.key?(:_internal_contrib_blobs) && !result[:vertices].empty?
-              expect(result[:_internal_contrib_blobs].values.first).to eq(Set[1,2,3,4])
+            expect(graph_topo[:vertices].size).to eq(1)
+            expect(graph_topo[:edges].size).to eq(0)
+            if graph_topo.key?(:_internal_contrib_blobs) && !graph_topo[:vertices].empty?
+              expect(graph_topo[:_internal_contrib_blobs].values.first).to eq(Set[1,2,3,4])
             end
           elsif implementation == :ruby
-            expect(result[:vertices].size).to be >= 0
-            expect(result[:edges].size).to eq(0)
+            expect(graph_topo[:vertices].size).to be >= 0 # Ruby might find more due to different clustering
+            expect(graph_topo[:edges].size).to eq(0) # Or potentially edges depending on interpretation
+            expect(result[:source_segmentation][:labels]).to eq(labels_for_j1j2_edge_yields_1_vertex_for_matzeye)
           end
         end
       end
 
       context 'with labels_for_two_distinct_junctions_with_edge (MatzEye specific)' do
+        let(:seg_data) { build_mock_segmentation_data(labels_for_two_distinct_junctions_with_edge) }
         it 'creates an edge for two junctions sharing >= 2 blob IDs', if: implementation == :matzeye do
-          result = BlobGraph.extract_from_labels(labels_for_two_distinct_junctions_with_edge, options)
-          expect(result[:vertices].size).to eq(2)
-          expect(result[:edges].size).to eq(1)
-          v_ids = result[:vertices].keys.sort
-          expect(result[:edges].first.sort).to eq(v_ids)
-          if result.key?(:_internal_contrib_blobs)
-             expect(result[:_internal_contrib_blobs][v_ids[0]]).to eq(Set[1,2,3])
-             expect(result[:_internal_contrib_blobs][v_ids[1]]).to eq(Set[2,3,4])
+          result = BlobGraph.extract_from_labels(seg_data, options)
+          graph_topo = result # MatzEye not updated, direct result
+          expect(graph_topo[:vertices].size).to eq(2)
+          expect(graph_topo[:edges].size).to eq(1)
+          v_ids = graph_topo[:vertices].keys.sort
+          expect(graph_topo[:edges].first.sort).to eq(v_ids)
+          if graph_topo.key?(:_internal_contrib_blobs)
+             expect(graph_topo[:_internal_contrib_blobs][v_ids[0]]).to eq(Set[1,2,3])
+             expect(graph_topo[:_internal_contrib_blobs][v_ids[1]]).to eq(Set[2,3,4])
           end
         end
       end
 
       context 'with labels_for_two_distinct_junctions_no_edge (MatzEye specific)' do
+        let(:seg_data) { build_mock_segmentation_data(labels_for_two_distinct_junctions_no_edge) }
         it 'does not create an edge for two junctions sharing < 2 blob IDs', if: implementation == :matzeye do
-          result = BlobGraph.extract_from_labels(labels_for_two_distinct_junctions_no_edge, options)
-          expect(result[:vertices].size).to eq(2)
-          expect(result[:edges]).to be_empty
-           if result.key?(:_internal_contrib_blobs)
-             v_ids = result[:vertices].keys.sort
-             # J1: (1,1) val=2. Nhood for L[1][1]: [[1,1,0],[1,2,3],[0,0,0]]. Unique {1,2,3}.
-             # J2: (3,4) val=5 (L[4][3]). Nhood for L[4][3]: [[7,0,0],[0,5,0],[0,6,0]]. Unique {5,6,7}.
-             expect(result[:_internal_contrib_blobs][v_ids[0]]).to eq(Set[1,2,3])
-             expect(result[:_internal_contrib_blobs][v_ids[1]]).to eq(Set[5,6,7])
+          result = BlobGraph.extract_from_labels(seg_data, options)
+          graph_topo = result # MatzEye not updated
+          expect(graph_topo[:vertices].size).to eq(2)
+          expect(graph_topo[:edges]).to be_empty
+           if graph_topo.key?(:_internal_contrib_blobs)
+             v_ids = graph_topo[:vertices].keys.sort
+             expect(graph_topo[:_internal_contrib_blobs][v_ids[0]]).to eq(Set[1,2,3])
+             expect(graph_topo[:_internal_contrib_blobs][v_ids[1]]).to eq(Set[5,6,7])
            end
         end
       end
 
       context 'with labels_no_junctions (3x4 image)' do
+        let(:seg_data) { build_mock_segmentation_data(labels_no_junctions) }
         it 'identifies zero vertices and zero edges' do
-          result = BlobGraph.extract_from_labels(labels_no_junctions, options)
-          expect(result[:vertices]).to be_empty
-          expect(result[:edges]).to be_empty
+          result = BlobGraph.extract_from_labels(seg_data, options)
+          graph_topo = implementation == :ruby ? result[:graph_topology] : result
+          expect(graph_topo[:vertices]).to be_empty
+          expect(graph_topo[:edges]).to be_empty
+          if implementation == :ruby
+            expect(result[:source_segmentation][:labels]).to eq(labels_no_junctions)
+          end
         end
       end
 
       context 'with original labels_cross' do
+        let(:seg_data) { build_mock_segmentation_data(labels_cross) }
         it "processes and returns structure for #{implementation}" do
-          result = BlobGraph.extract_from_labels(labels_cross, options.merge(skeletonize: false))
+          result = BlobGraph.extract_from_labels(seg_data, options.merge(skeletonize: false))
+          graph_topo = implementation == :ruby ? result[:graph_topology] : result
+
           if implementation == :ruby
-            expect(result[:vertices].size).to be >= 2
+            expect(graph_topo[:vertices].size).to be >= 2 # Ruby might find more due to different clustering
+            expect(result[:source_segmentation][:labels]).to eq(labels_cross)
           elsif implementation == :matzeye
-            expect(result[:vertices].size).to eq(2)
+            expect(graph_topo[:vertices].size).to eq(2)
           end
-          expect(result[:edges]).to be_empty
+          expect(graph_topo[:edges]).to be_empty # Original test expectation
         end
       end
     end
