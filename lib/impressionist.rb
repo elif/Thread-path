@@ -172,6 +172,7 @@ def process_image(img, options = {})
       :labels       => labels,
       :avg_colors   => avg_colors_map,
       :blob_count   => blob_count,
+      :blob_sizes   => blob_sizes_map, # Added from master
       :width        => width,
       :height       => height
     }

@@ -148,6 +148,14 @@ RSpec.describe Impressionist do
           expect(result[:segmentation_result][:width]).to eq(1)
           expect(result[:segmentation_result][:height]).to eq(1)
           expect(result[:segmentation_result]).to have_key(:avg_colors)
+          expect(result[:segmentation_result]).to have_key(:blob_sizes)
+          expect(result[:segmentation_result][:blob_sizes]).to be_an(Array)
+          if result[:segmentation_result][:blob_count] > 0
+            # Assuming blob_sizes is 1-indexed like avg_colors, including an entry for label 0 if it exists,
+            # or directly mapping blob_count to size if 0 is not included for sizes.
+            # Based on avg_colors, it's likely blob_count + 1.
+            expect(result[:segmentation_result][:blob_sizes].size).to eq(result[:segmentation_result][:blob_count] + 1)
+          end
         else
           # Existing checks for other implementations (matzeye, palette_quantize)
           expect(result).to have_key(:image)
@@ -179,6 +187,11 @@ RSpec.describe Impressionist do
         expect(result[:segmentation_result][:blob_count]).to be_an(Integer)
         expect(result[:segmentation_result][:width]).to eq(1)
         expect(result[:segmentation_result][:height]).to eq(1)
+        expect(result[:segmentation_result]).to have_key(:blob_sizes)
+        expect(result[:segmentation_result][:blob_sizes]).to be_an(Array)
+        if result[:segmentation_result][:blob_count] > 0
+          expect(result[:segmentation_result][:blob_sizes].size).to eq(result[:segmentation_result][:blob_count] + 1)
+        end
       end
     end
 
@@ -280,6 +293,11 @@ RSpec.describe Impressionist do
       expect(segmentation[:blob_count]).to be_an(Integer)
       expect(segmentation[:width]).to eq(quant_test_img.width)
       expect(segmentation[:height]).to eq(quant_test_img.height)
+      expect(segmentation).to have_key(:blob_sizes)
+      expect(segmentation[:blob_sizes]).to be_an(Array)
+      if segmentation[:blob_count] > 0
+        expect(segmentation[:blob_sizes].size).to eq(segmentation[:blob_count] + 1)
+      end
 
       expected_color = ChunkyPNG::Color.rgb(11, 21, 29) # Based on original test logic for color averaging
       expect(result[:processed_image][0,0]).to eq(expected_color)
@@ -299,8 +317,14 @@ RSpec.describe Impressionist do
       expect(result[:image_attributes][:height]).to eq(blur_test_img.height)
 
       expect(result).to have_key(:segmentation_result)
-      expect(result[:segmentation_result][:width]).to eq(blur_test_img.width)
-      expect(result[:segmentation_result][:height]).to eq(blur_test_img.height)
+      segmentation = result[:segmentation_result]
+      expect(segmentation[:width]).to eq(blur_test_img.width)
+      expect(segmentation[:height]).to eq(blur_test_img.height)
+      expect(segmentation).to have_key(:blob_sizes)
+      expect(segmentation[:blob_sizes]).to be_an(Array)
+      if segmentation[:blob_count] > 0
+         expect(segmentation[:blob_sizes].size).to eq(segmentation[:blob_count] + 1)
+      end
     end
   end
 
