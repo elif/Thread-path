@@ -222,8 +222,12 @@ RSpec.describe 'Application Integration Workflow' do
             expect(color).to match(/^#[0-9a-fA-F]{6}$/)
             end
         end
-        # Based on min_blob_size: 150, a 1x1 image will not yield any blobs.
-        expect(colors).to be_empty # Adjust if test_image or params change
+        # REASONING FOR EMPTY:
+        # app.rb Impressionist options: min_blob_size: 20
+        # app.rb post-processing: MIN_CANDIDATE_BLOB_SIZE = 10
+        # test_image.png is 1x1 pixel. Blob size = 1.
+        # 1 < MIN_CANDIDATE_BLOB_SIZE (10), so it's filtered out.
+        expect(colors).to be_empty
       end
 
       it 'saves the uploaded image to the session directory' do
@@ -279,6 +283,62 @@ RSpec.describe 'Application Integration Workflow' do
         expect(json_response['message']).to include("Failed to save or process image:")
         # The specific error message from ChunkyPNG might vary, e.g. "Not a PNG file" or similar.
         # Checking for the prefix is sufficient.
+      end
+    end
+
+    context 'when fixture_distinct_colors.png is uploaded' do
+      let(:distinct_colors_image_path) { File.expand_path('../fixtures/fixture_distinct_colors.png', __dir__) }
+      let(:uploaded_distinct_colors_file) { Rack::Test::UploadedFile.new(distinct_colors_image_path, 'image/png', true) }
+
+      before do
+        post '/palette_upload', { palette_image: uploaded_distinct_colors_file }
+      end
+
+      it 'returns a 200 OK status' do
+        expect(last_response.status).to eq(200)
+      end
+
+      it 'returns content type application/json' do
+        expect(last_response.content_type).to eq('application/json')
+      end
+
+      it 'returns a successful JSON response with extracted colors' do
+        json_response = JSON.parse(last_response.body)
+        expect(json_response['status']).to eq('success')
+        expect(json_response['message']).to eq('Colors extracted')
+        expect(json_response['image_path']).to include("/tmp/test_fixture_uid/palette_source.png")
+
+        colors_array = json_response['colors']
+        expect(colors_array).to be_an(Array)
+        expect(colors_array.length).to be > 0
+        # fixture_distinct_colors.png has 5 large, distinct blocks.
+        # All should be found as their size (2500px) >> MIN_CANDIDATE_BLOB_SIZE (10)
+        # And they are very different, so they shouldn't be filtered by similarity.
+        expect(colors_array.length).to eq(5) # Expecting all 5 distinct colors
+        expect(colors_array.length).to be <= 10 # Adheres to MAX_PALETTE_SIZE in app.rb
+
+        colors_array.each do |color_hex|
+          expect(color_hex).to match(/^#[0-9a-fA-F]{6}$/)
+        end
+      end
+
+      it 'returns a palette without near-duplicate colors' do
+        json_response = JSON.parse(last_response.body)
+        colors_array = json_response['colors']
+
+        # Convert hex strings to ChunkyPNG::Color objects for analysis
+        # Note: ChunkyPNG::Color.from_hex does not want the '#' prefix.
+        chunky_palette = colors_array.map { |hex| ChunkyPNG::Color.from_hex(hex.delete('#')) }
+
+        # Use the helper from spec_helper.rb (via config.include ColorHelpers)
+        # Threshold 50 is consistent with app.rb's COLOR_SIMILARITY_THRESHOLD
+        expect(has_near_duplicates?(chunky_palette, 50)).to be false
+      end
+
+      it 'saves the uploaded image to the session directory' do
+        session_dir_path = File.join(TMP_DIR_BASE, 'test_fixture_uid')
+        expected_image_path = File.join(session_dir_path, 'palette_source.png')
+        expect(File).to exist(expected_image_path)
       end
     end
   end

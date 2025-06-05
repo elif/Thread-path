@@ -92,7 +92,16 @@ module Impressionist
           labels, blob_count = relabel_contiguous(labels, width, height)
         end
       end
-      { labels: labels, blob_count: blob_count }
+
+      # Calculate blob sizes for the final labels
+      final_blob_sizes = Array.new(blob_count + 1, 0)
+      height.times do |y|
+        (0...width).each do |x|
+          bid = labels[y][x]
+          final_blob_sizes[bid] += 1 if bid > 0
+        end
+      end
+      { labels: labels, blob_count: blob_count, blob_sizes: final_blob_sizes }
     end
     def _calculate_average_colors(original_image, labels, blob_count)
       width = original_image.width
@@ -157,12 +166,13 @@ def process_image(img, options = {})
   labeling_result = _calculate_labels(quantized_data, width, height, connectivity, min_blob_size)
   labels = labeling_result[:labels]
   blob_count = labeling_result[:blob_count]
+  blob_sizes_map = labeling_result[:blob_sizes] # Get blob_sizes from the result
 
   avg_colors_map = _calculate_average_colors(img, labels, blob_count) # Use original img for color averaging
 
   output_image = _build_recolored_image(width, height, labels, avg_colors_map)
 
-  { image: output_image, labels: labels, blob_count: blob_count, avg_colors: avg_colors_map }
+  { image: output_image, labels: labels, blob_count: blob_count, avg_colors: avg_colors_map, blob_sizes: blob_sizes_map }
 end
 
     def merge_small_blobs(labels, quantized, width, height, small_blobs, connectivity)

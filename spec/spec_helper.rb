@@ -5,8 +5,50 @@ ENV['RACK_ENV'] = 'test'
 # this file to always be loaded, without a need to explicitly require it in any
 # files.
 #
+require 'chunky_png' # Required for ChunkyPNG::Color objects
 require_relative '../app' # Ensure the Sinatra app is loaded
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__) # Add lib to load path
+
+# Helper methods for color analysis
+module ColorHelpers
+  def rgb_distance(color1, color2)
+    r1 = ChunkyPNG::Color.r(color1)
+    g1 = ChunkyPNG::Color.g(color1)
+    b1 = ChunkyPNG::Color.b(color1)
+
+    r2 = ChunkyPNG::Color.r(color2)
+    g2 = ChunkyPNG::Color.g(color2)
+    b2 = ChunkyPNG::Color.b(color2)
+
+    Math.sqrt((r1 - r2)**2 + (g1 - g2)**2 + (b1 - b2)**2).to_f
+  end
+
+  def has_near_duplicates?(palette, threshold)
+    return false if palette.nil? || palette.length < 2
+
+    palette.combination(2).any? do |c1, c2|
+      rgb_distance(c1, c2) < threshold
+    end
+  end
+
+  def count_unique_colors(palette, threshold)
+    return 0 if palette.nil? || palette.empty?
+
+    unique_colors_list = []
+    palette.each do |color|
+      is_unique = true
+      unique_colors_list.each do |unique_color|
+        if rgb_distance(color, unique_color) < threshold
+          is_unique = false
+          break
+        end
+      end
+      unique_colors_list << color if is_unique
+    end
+    unique_colors_list.count
+  end
+end
+
 #
 # Given that it is always loaded, you are encouraged to keep this file as
 # light-weight as possible. Requiring heavyweight dependencies from this file
@@ -55,6 +97,7 @@ RSpec.configure do |config|
   end
 
   config.extend ImplementationHelper
+  config.include ColorHelpers # Make color helper methods available in specs
 
   # This option will default to `:apply_to_host_groups` in RSpec 4 (and will
   # have no way to turn it off -- the option exists only for backwards

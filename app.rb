@@ -103,6 +103,20 @@ helpers do
   def inline_svg_tag(svg_content)
     "<div style=\"width:100%;height:100%;\">#{svg_content}</div>"
   end
+
+  def rgb_distance(color1, color2)
+    return Float::INFINITY if color1.nil? || color2.nil? # Should not happen with proper checks
+
+    r1 = ChunkyPNG::Color.r(color1)
+    g1 = ChunkyPNG::Color.g(color1)
+    b1 = ChunkyPNG::Color.b(color1)
+
+    r2 = ChunkyPNG::Color.r(color2)
+    g2 = ChunkyPNG::Color.g(color2)
+    b2 = ChunkyPNG::Color.b(color2)
+
+    Math.sqrt((r1 - r2)**2 + (g1 - g2)**2 + (b1 - b2)**2).to_f
+  end
 end
 
 # ----------------------------------------------------------------------------
@@ -141,42 +155,74 @@ post '/palette_upload' do
       quant_interval: 32,
       blur: true,
       blur_radius: 1,
-      min_blob_size: 150,
+      min_blob_size: 20, # Lowered min_blob_size for Impressionist
       implementation: :chunky_png
     }
     impressionist_result = Impressionist.process(palette_image_obj, impressionist_options)
 
-    # Extract, filter, and convert average colors to unique hex strings
-    avg_chunky_colors = impressionist_result[:avg_colors]
-    hex_colors = []
-    if avg_chunky_colors && avg_chunky_colors.is_a?(Array)
-      # Start from index 1 as avg_colors[0] can be a placeholder (e.g., TRANSPARENT)
-      # Also filter out any nil values or explicit TRANSPARENT color from actual blobs
-      hex_colors = avg_chunky_colors[1..-1].compact.map do |color|
-        next if color == ChunkyPNG::Color::TRANSPARENT
-        ChunkyPNG::Color.to_hex_string(color, false) # false for #RRGGBB
-      end.compact.uniq
+    # Refined Palette Extraction Logic
+    raw_avg_colors = impressionist_result[:avg_colors] # 1-indexed, 0 is placeholder
+    blob_sizes_map = impressionist_result[:blob_sizes] # 1-indexed
+    blob_count = impressionist_result[:blob_count]
+
+    MAX_PALETTE_SIZE = 10
+    COLOR_SIMILARITY_THRESHOLD = 50 # Max RGB distance to be considered "different"
+    MIN_CANDIDATE_BLOB_SIZE = 10    # Absolute minimum size for a blob to be considered
+
+    candidates = []
+    if raw_avg_colors && blob_sizes_map && blob_count > 0
+      (1..blob_count).each do |blob_id|
+        color = raw_avg_colors[blob_id]
+        size = blob_sizes_map[blob_id]
+        # Ensure color and size are valid, and color is not fully transparent
+        if color && size && !(ChunkyPNG::Color.a(color) == 0 && color != ChunkyPNG::Color::TRANSPARENT) && color != ChunkyPNG::Color::TRANSPARENT
+          candidates << { color: color, size: size, id: blob_id }
+        end
+      end
     end
 
-    # Integrate with PaletteManager
-    if hex_colors.any?
+    # Filter out initial tiny noise
+    candidates.reject! { |c| c[:size] < MIN_CANDIDATE_BLOB_SIZE }
+
+    # Sort candidates: primarily by size (descending)
+    candidates.sort_by! { |c| -c[:size] }
+
+    # Build final palette by iterative selection based on similarity
+    final_palette_chunky_colors = []
+    candidates.each do |candidate|
+      is_too_similar = final_palette_chunky_colors.any? do |existing_color|
+        rgb_distance(candidate[:color], existing_color) < COLOR_SIMILARITY_THRESHOLD
+      end
+
+      unless is_too_similar
+        final_palette_chunky_colors << candidate[:color]
+      end
+      break if final_palette_chunky_colors.length >= MAX_PALETTE_SIZE
+    end
+
+    # Convert final palette to hex strings for JSON response
+    output_hex_colors = final_palette_chunky_colors.map do |color|
+      ChunkyPNG::Color.to_hex_string(color, false) # false for #RRGGBB
+    end
+
+    # Integrate with PaletteManager (using the new final hex colors)
+    if output_hex_colors.any?
       palette_manager = PaletteManager.new
-      hex_colors.each do |hex_string|
-        # ChunkyPNG::Color.from_hex_string expects '#' prefix if not just RRGGBB or RRGGBBAA
-        # Our hex_string is already in #RRGGBB format from to_hex_string(color, false)
-        color_object = ChunkyPNG::Color.from_hex(hex_string) # Use from_hex for strings like '#RRGGBB'
+      output_hex_colors.each do |hex_string|
+        color_object = ChunkyPNG::Color.from_hex(hex_string)
         palette_manager.add_to_active_palette(color_object)
       end
-      # The palette_manager instance is now populated but not persisted or used further in this step.
+      # palette_manager instance is populated.
     end
 
     {
       status: 'success',
       message: 'Colors extracted',
       image_path: image_path_for_client,
-      colors: hex_colors
+      colors: output_hex_colors # Use the new refined list
     }.to_json
   rescue StandardError => e
+    logger.error "Error in /palette_upload: #{e.message}\n#{e.backtrace.join("\n")}"
     status 500
     { status: 'error', message: "Failed to save or process image: #{e.message}" }.to_json
   end
