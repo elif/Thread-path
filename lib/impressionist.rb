@@ -1,6 +1,7 @@
 require 'chunky_png'
 require 'set'
 require 'fileutils' # Added for FileUtils.mkdir_p
+require_relative 'impressionist_matzeye_adapter' # Changed from impressionist_matzeye
 
 module Impressionist
   VERSION = '1.1.0'
@@ -16,7 +17,12 @@ module Impressionist
 
     def process(input_path, options = {})
       img = load_image(input_path)
-      process_image(img, options) # process_image returns hash, .process will now also return hash
+      if options[:implementation] == :matzeye # Implementation key remains :matzeye
+        Impressionist::MatzEyeAdapter.process_image(img, options) # Call the Adapter
+      else
+        # Default to chunky_png or if :implementation is :chunky_png or not specified
+        process_image(img, options)
+      end
     end
 
     def load_image(path)
