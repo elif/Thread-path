@@ -1,6 +1,7 @@
 require 'spec_helper' # Should require 'app.rb' and set RACK_ENV='test'
 require 'rack/test'
 require 'fileutils' # For cleaning up tmp session dirs
+require 'json' # For parsing JSON responses
 
 RSpec.describe 'Application Integration Workflow' do
   include Rack::Test::Methods
@@ -174,6 +175,111 @@ RSpec.describe 'Application Integration Workflow' do
       # puts "Path Traversal Response Status: #{last_response.status}"
       # puts "Path Traversal Response Location: #{last_response.headers['Location']}"
       expect(last_response.status).to eq(404)
+    end
+  end
+
+  describe 'POST /palette_upload' do
+    # Use the test_image.png created in before(:all) as it's simple but guaranteed to exist
+    let(:image_path) { File.expand_path('../fixtures/test_image.png', __dir__) }
+    let(:uploaded_file) { Rack::Test::UploadedFile.new(image_path, 'image/png', true) } # binary mode true
+
+    context 'when a valid image is uploaded' do
+      before do
+        post '/palette_upload', { palette_image: uploaded_file }
+      end
+
+      it 'returns a 200 OK status' do
+        expect(last_response.status).to eq(200)
+      end
+
+      it 'returns content type application/json' do
+        expect(last_response.content_type).to eq('application/json')
+      end
+
+      it 'returns a successful JSON response structure' do
+        json_response = JSON.parse(last_response.body)
+        expect(json_response['status']).to eq('success')
+        expect(json_response['message']).to eq('Colors extracted')
+        expect(json_response['image_path']).to be_a(String)
+        # In test mode, session[:uid] is "test_fixture_uid"
+        expect(json_response['image_path']).to include("/tmp/test_fixture_uid/palette_source.png")
+        expect(json_response['colors']).to be_an(Array)
+      end
+
+      it 'returns colors as an array of hex strings' do
+        json_response = JSON.parse(last_response.body)
+        colors = json_response['colors']
+        expect(colors).to be_an(Array)
+        # For a 1x1 black PNG (000000), Impressionist with current settings should extract one color.
+        # If test_image.png was white (FFFFFF), it might be filtered depending on processing.
+        # The created test_image.png is black (iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII= is a 1x1 black PNG)
+        # So, we expect at least one color unless min_blob_size is too large for a 1x1 image.
+        # Current params for /palette_upload are min_blob_size: 150. This will result in NO colors for a 1x1 image.
+        # This is fine, the test should reflect the actual behavior.
+        # So, for the 1x1 test_image.png and min_blob_size: 150, colors array should be empty.
+        if colors.any? # Only check format if colors are present
+            colors.each do |color|
+            expect(color).to match(/^#[0-9a-fA-F]{6}$/)
+            end
+        end
+        # Based on min_blob_size: 150, a 1x1 image will not yield any blobs.
+        expect(colors).to be_empty # Adjust if test_image or params change
+      end
+
+      it 'saves the uploaded image to the session directory' do
+        # Session ID is 'test_fixture_uid' in test environment
+        session_dir_path = File.join(TMP_DIR_BASE, 'test_fixture_uid')
+        expected_image_path = File.join(session_dir_path, 'palette_source.png')
+        expect(File).to exist(expected_image_path)
+      end
+    end
+
+    context 'when no image is uploaded' do
+      before do
+        post '/palette_upload', {} # No palette_image param
+      end
+
+      it 'returns a 400 Bad Request status' do
+        expect(last_response.status).to eq(400)
+      end
+
+      it 'returns content type application/json' do
+        expect(last_response.content_type).to eq('application/json')
+      end
+
+      it 'returns an error JSON response' do
+        json_response = JSON.parse(last_response.body)
+        expect(json_response['status']).to eq('error')
+        expect(json_response['message']).to eq('No palette_image uploaded')
+      end
+    end
+
+    context 'when an invalid file type is uploaded' do
+      let(:non_image_file_path) do
+        path = File.expand_path('../fixtures/not_an_image.txt', __dir__)
+        File.write(path, "This is not an image.")
+        path
+      end
+      let(:uploaded_invalid_file) { Rack::Test::UploadedFile.new(non_image_file_path, 'text/plain', true) }
+
+      after do
+        FileUtils.rm_f(non_image_file_path) # Clean up the dummy text file
+      end
+
+      # This specific check (rejecting non-image server-side before Impressionist)
+      # is not explicitly in app.rb's /palette_upload, which relies on ChunkyPNG to fail.
+      # ChunkyPNG::Image.from_file will raise an error if it's not a valid PNG.
+      # Let's test that this failure is caught and results in a 500.
+      it 'returns a 500 if processing fails due to invalid image format' do
+        post '/palette_upload', { palette_image: uploaded_invalid_file }
+        expect(last_response.status).to eq(500) # Internal Server Error
+        expect(last_response.content_type).to eq('application/json')
+        json_response = JSON.parse(last_response.body)
+        expect(json_response['status']).to eq('error')
+        expect(json_response['message']).to include("Failed to save or process image:")
+        # The specific error message from ChunkyPNG might vary, e.g. "Not a PNG file" or similar.
+        # Checking for the prefix is sufficient.
+      end
     end
   end
 end
