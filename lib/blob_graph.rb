@@ -1,13 +1,13 @@
 require 'set'
-require_relative 'blob_graph_matzeye' # Changed from blob_graph_opencv
+require_relative 'blob_graph_matzeye_adapter' # Changed from blob_graph_matzeye
 
 module BlobGraph
   class << self
     # Public method to extract blob graph from a pre-labeled image.
     def extract_from_labels(labels, options = {})
       implementation = options.fetch(:implementation, :ruby) # Default to :ruby
-      if implementation == :matzeye # Changed from :opencv
-        BlobGraph::MatzEye.extract_from_labels(labels, options)
+      if implementation == :matzeye # Implementation key remains :matzeye
+        BlobGraph::MatzEyeAdapter.extract_from_labels(labels, options) # Call the Adapter
       else # :ruby or any other value defaults to original
         _ruby_extract_from_labels(labels, options)
       end
