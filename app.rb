@@ -1,9 +1,11 @@
 require 'sinatra'
 require 'securerandom'
 require 'fileutils'
+require 'json'
 require_relative 'lib/impressionist'
 require_relative 'lib/blob_graph'
 require_relative 'lib/quilt_graph'
+require_relative 'lib/palette_manager'
 
 enable :sessions
 set :bind, '0.0.0.0'
@@ -104,6 +106,83 @@ helpers do
 end
 
 # ----------------------------------------------------------------------------
+# POST '/palette_upload' – Upload palette image
+post '/palette_upload' do
+  content_type :json
+
+  unless params[:palette_image] &&
+         (tempfile = params[:palette_image][:tempfile])
+    status 400
+    return { status: 'error', message: 'No palette_image uploaded' }.to_json
+  end
+
+  s_dir = session_dir
+  # Ensure session_dir itself doesn't make it into the publicly accessible path
+  # if we decide to use part of s_dir in the response.
+  # For now, we use the full path as per requirements, but this might be a security concern
+  # if TMP_DIR is directly served. The /tmp/:sid/:file route seems to handle this safely.
+
+  destination_filename = 'palette_source.png'
+  destination_path = File.join(s_dir, destination_filename)
+
+  begin
+    FileUtils.copy_file(tempfile.path, destination_path)
+    # The requirement is to return the full path, which includes the session ID.
+    # Example: /tmp/session_id/palette_source.png
+    # The actual TMP_DIR is not part of the URL directly, but the /tmp/:sid/:file route constructs it.
+    # So, the image_path should align with how that route would serve it.
+    image_path_for_client = "/tmp/#{session[:uid]}/#{destination_filename}"
+
+    # Load the image with ChunkyPNG
+    palette_image_obj = ChunkyPNG::Image.from_file(destination_path)
+
+    # Process the image with Impressionist
+    impressionist_options = {
+      quant_interval: 32,
+      blur: true,
+      blur_radius: 1,
+      min_blob_size: 150,
+      implementation: :chunky_png
+    }
+    impressionist_result = Impressionist.process(palette_image_obj, impressionist_options)
+
+    # Extract, filter, and convert average colors to unique hex strings
+    avg_chunky_colors = impressionist_result[:avg_colors]
+    hex_colors = []
+    if avg_chunky_colors && avg_chunky_colors.is_a?(Array)
+      # Start from index 1 as avg_colors[0] can be a placeholder (e.g., TRANSPARENT)
+      # Also filter out any nil values or explicit TRANSPARENT color from actual blobs
+      hex_colors = avg_chunky_colors[1..-1].compact.map do |color|
+        next if color == ChunkyPNG::Color::TRANSPARENT
+        ChunkyPNG::Color.to_hex_string(color, false) # false for #RRGGBB
+      end.compact.uniq
+    end
+
+    # Integrate with PaletteManager
+    if hex_colors.any?
+      palette_manager = PaletteManager.new
+      hex_colors.each do |hex_string|
+        # ChunkyPNG::Color.from_hex_string expects '#' prefix if not just RRGGBB or RRGGBBAA
+        # Our hex_string is already in #RRGGBB format from to_hex_string(color, false)
+        color_object = ChunkyPNG::Color.from_hex(hex_string) # Use from_hex for strings like '#RRGGBB'
+        palette_manager.add_to_active_palette(color_object)
+      end
+      # The palette_manager instance is now populated but not persisted or used further in this step.
+    end
+
+    {
+      status: 'success',
+      message: 'Colors extracted',
+      image_path: image_path_for_client,
+      colors: hex_colors
+    }.to_json
+  rescue StandardError => e
+    status 500
+    { status: 'error', message: "Failed to save or process image: #{e.message}" }.to_json
+  end
+end
+
+# ----------------------------------------------------------------------------
 # Step 0: GET '/' – Show upload form and Step 1 options.
 get '/' do
   session.clear
@@ -117,6 +196,35 @@ get '/' do
         body { font-family: Arial, sans-serif; margin: 20px; }
         label { display: block; margin-top: 10px; }
         input[type="number"] { width: 60px; }
+        /* Styles for Palette Tool */
+        #paletteDropZone {
+          border: 2px dashed #ccc;
+          padding: 20px;
+          margin-top: 20px;
+          margin-bottom: 10px;
+          text-align: center;
+          background-color: #f9f9f9;
+          cursor: pointer;
+        }
+        #paletteDropZone.dragover {
+          background-color: #e9e9e9;
+          border-color: #aaa;
+        }
+        #paletteSwatches {
+          margin-top: 10px;
+          display: flex;
+          flex-wrap: wrap;
+          min-height: 50px; /* So it's visible even when empty */
+          padding: 5px;
+          border: 1px solid #eee;
+        }
+        .swatch {
+          width: 50px;
+          height: 50px;
+          margin: 5px;
+          border: 1px solid #333;
+          display: inline-block;
+        }
       </style>
     </head>
     <body>
@@ -151,6 +259,113 @@ get '/' do
         <br>
         <button type="submit">Next: Recolor Image</button>
       </form>
+
+      <hr style="margin-top: 30px; margin-bottom: 30px;">
+
+      <h2>Palette Tool: Extract Colors from Image</h2>
+      <div id="paletteDropZone">
+        <p>Drag &amp; Drop an image here to extract its palette, or click to select file.</p>
+        <input type="file" id="paletteFileInput" accept="image/*" style="display: none;">
+      </div>
+      <div id="paletteSwatches">
+        <!-- Color swatches will be added here by JavaScript -->
+      </div>
+
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const dropZone = document.getElementById('paletteDropZone');
+        const swatchesDisplay = document.getElementById('paletteSwatches');
+        const fileInput = document.getElementById('paletteFileInput');
+
+        // Trigger hidden file input when drop zone is clicked
+        dropZone.addEventListener('click', () => {
+          fileInput.click();
+        });
+
+        fileInput.addEventListener('change', (event) => {
+          const files = event.target.files;
+          if (files.length > 0) {
+            handleFile(files[0]);
+          }
+        });
+
+        // Drag and Drop events
+        dropZone.addEventListener('dragenter', (event) => {
+          event.preventDefault();
+          dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragover', (event) => {
+          event.preventDefault(); // Necessary to allow drop
+          dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', (event) => {
+          event.preventDefault();
+          dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('dragend', (event) => { // Though 'dragleave' often suffices
+          event.preventDefault();
+          dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (event) => {
+          event.preventDefault();
+          dropZone.classList.remove('dragover');
+          const files = event.dataTransfer.files;
+          if (files.length > 0) {
+            handleFile(files[0]);
+          }
+        });
+
+        function handleFile(file) {
+          if (!file.type.startsWith('image/')) {
+            swatchesDisplay.innerHTML = '<p style="color: red;">Error: Only image files are allowed.</p>';
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append('palette_image', file);
+
+          swatchesDisplay.innerHTML = '<p>Loading colors...</p>';
+
+          fetch('/palette_upload', {
+            method: 'POST',
+            body: formData
+          })
+          .then(response => {
+            if (!response.ok) {
+              // Try to get error message from JSON response if available
+              return response.json().then(errData => {
+                throw new Error(errData.message || `Server error: ${response.status}`);
+              }).catch(() => { // Fallback if no JSON body or other parsing error
+                throw new Error(`Server error: ${response.status} - ${response.statusText}`);
+              });
+            }
+            return response.json();
+          })
+          .then(data => {
+            swatchesDisplay.innerHTML = ''; // Clear loading message
+            if (data.colors && data.colors.length > 0) {
+              data.colors.forEach(hexColor => {
+                const swatch = document.createElement('div');
+                swatch.className = 'swatch';
+                swatch.style.backgroundColor = hexColor;
+                swatch.title = hexColor; // Show hex on hover
+                swatchesDisplay.appendChild(swatch);
+              });
+            } else {
+              swatchesDisplay.innerHTML = '<p>No colors extracted or found.</p>';
+            }
+          })
+          .catch(error => {
+            console.error('Error uploading or processing palette image:', error);
+            swatchesDisplay.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+          });
+        }
+      });
+    </script>
     </body>
     </html>
   HTML
