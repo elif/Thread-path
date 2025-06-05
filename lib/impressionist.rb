@@ -162,7 +162,20 @@ def process_image(img, options = {})
 
   output_image = _build_recolored_image(width, height, labels, avg_colors_map)
 
-  { image: output_image, labels: labels, blob_count: blob_count, avg_colors: avg_colors_map }
+  {
+    :processed_image    => output_image,
+    :image_attributes   => {
+      :width  => width,
+      :height => height
+    },
+    :segmentation_result => {
+      :labels       => labels,
+      :avg_colors   => avg_colors_map,
+      :blob_count   => blob_count,
+      :width        => width,
+      :height       => height
+    }
+  }
 end
 
     def merge_small_blobs(labels, quantized, width, height, small_blobs, connectivity)

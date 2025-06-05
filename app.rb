@@ -85,19 +85,11 @@ helpers do
 
   # Paths within session_dir
   def path_step1_png;        File.join(session_dir, 'step1.png');        end
-  def path_labels_dat;       File.join(session_dir, 'labels.dat');       end
+  # path_labels_dat and path_avg_colors_dat are removed
   def path_step2_svg;        File.join(session_dir, 'step2_graph.svg');  end
   def path_final_svg;        File.join(session_dir, 'final_quilt.svg');  end
 
-  # Load dumped labels (from Marshal)
-  def load_labels
-    Marshal.load(File.binread(path_labels_dat))
-  end
-
-  # Save labels (2D Array) via Marshal
-  def save_labels(lbls)
-    File.open(path_labels_dat, 'wb') { |f| f.write(Marshal.dump(lbls)) }
-  end
+  # Removed load_labels, save_labels, load_avg_colors, save_avg_colors
 
   # Render an SVG string inline (embed directly)
   def inline_svg_tag(svg_content)
@@ -388,12 +380,16 @@ post '/step1' do
 
   # Call public Impressionist.process method
   impressionist_result = Impressionist.process(orig_path, step1_options)
-  step1_img = impressionist_result[:image]
-  labels = impressionist_result[:labels]
-  # blob_count = impressionist_result[:blob_count] # Available if needed
 
-  step1_img.save(path_step1_png)
-  save_labels(labels)
+  # Save the processed image for display
+  processed_image = impressionist_result[:processed_image]
+  processed_image.save(path_step1_png)
+
+  # Store relevant data in session
+  session[:image_context] = {
+    segmentation_data: impressionist_result[:segmentation_result],
+    image_attributes: impressionist_result[:image_attributes]
+  }
 
   <<~HTML
     <!DOCTYPE html>
@@ -445,22 +441,26 @@ end
 # ----------------------------------------------------------------------------
 # Step 2: POST '/step2' – Extract blob graph, save SVG, and show graph + Step 3 options.
 post '/step2' do
-  labels = load_labels
-  # height = labels.size # Not directly used, but good for context
-  # width  = labels.first.size # Not directly used
+  image_context = session[:image_context]
+  halt 400, "Session data missing. Please start from Step 1." unless image_context
+
+  segmentation_data = image_context[:segmentation_data]
+  halt 400, "Segmentation data missing. Please start from Step 1." unless segmentation_data
 
   step2_parsed_options = parse_step2_params(params)
 
-  result = BlobGraph.extract_from_labels(labels, step2_parsed_options)
+  blob_graph_output = BlobGraph.extract_from_labels(segmentation_data, step2_parsed_options)
+  session[:blob_graph_data] = blob_graph_output # Store the entire output
 
-  vertices = result[:vertices]
-  edges    = result[:edges]
-  detailed = result[:detailed_edges]
+  graph_topology = blob_graph_output[:graph_topology]
+  vertices = graph_topology[:vertices]
+  edges    = graph_topology[:edges]
+  # detailed_edges = graph_topology[:detailed_edges] # Available if needed for SVG
 
   step2_svg = ""
   if vertices.empty?
     step2_svg = '<svg width="100" height="100"><text x="10" y="20">No graph generated (no vertices).</text></svg>'
-    edges = []
+    # edges = [] # edges is already sourced from graph_topology
   else
     xs = vertices.values.map { |(x,_)| x }
     ys = vertices.values.map { |(_,y)| y }
@@ -492,9 +492,7 @@ post '/step2' do
 
   File.write(path_step2_svg, step2_svg)
 
-  session[:vertices] = vertices
-  session[:edges]    = edges
-  session[:detailed_edges] = detailed
+  # Old session[:vertices], [:edges], [:detailed_edges] are removed by storing session[:blob_graph_data]
 
   <<~HTML
     <!DOCTYPE html>
@@ -524,13 +522,13 @@ end
 # ----------------------------------------------------------------------------
 # Step 3: POST '/step3' – Smooth/validate graph and show final quilt‐legal SVG.
 post '/step3' do
-  vertices = session[:vertices]
-  edges    = session[:edges]
+  blob_graph_data = session[:blob_graph_data]
+  halt 400, "Blob graph data missing. Please complete Step 2." unless blob_graph_data
 
-  graph_input = { vertices: vertices, edges: edges }
-  quilt_graph_result = QuiltGraph.correct_quilt(graph_input)
+  # QuiltGraph.correct_quilt now expects the full blob_graph_data structure
+  quilt_graph_output = QuiltGraph.correct_quilt(blob_graph_data)
 
-  final_svg = QuiltGraph.graph_to_svg_string(quilt_graph_result)
+  final_svg = QuiltGraph.graph_to_svg_string(quilt_graph_output)
   File.write(path_final_svg, final_svg)
 
   <<~HTML

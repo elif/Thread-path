@@ -4,20 +4,21 @@ require_relative 'blob_graph_matzeye_adapter' # Changed from blob_graph_matzeye
 module BlobGraph
   class << self
     # Public method to extract blob graph from a pre-labeled image.
-    def extract_from_labels(labels, options = {})
+    def extract_from_labels(segmentation_data, options = {})
       implementation = options.fetch(:implementation, :ruby) # Default to :ruby
       if implementation == :matzeye # Implementation key remains :matzeye
-        BlobGraph::MatzEyeAdapter.extract_from_labels(labels, options) # Call the Adapter
+        BlobGraph::MatzEyeAdapter.extract_from_labels(segmentation_data, options) # Call the Adapter
       else # :ruby or any other value defaults to original
-        _ruby_extract_from_labels(labels, options)
+        _ruby_extract_from_labels(segmentation_data, options)
       end
     end
 
     private # All methods below this are private class methods
 
-    def _ruby_extract_from_labels(labels, options = {})
-      height = labels.size
-      width  = labels.first.size
+    def _ruby_extract_from_labels(segmentation_data, options = {})
+      labels = segmentation_data[:labels]
+      height = segmentation_data[:height] # or labels.size
+      width  = segmentation_data[:width]  # or labels.first.size
 
       junction_conn  = options.fetch(:junction_conn, 8)
       junction_conn  = [4, 8].include?(junction_conn) ? junction_conn : 8
@@ -181,10 +182,14 @@ module BlobGraph
         end.compact # Remove any nils if vertex data was missing
       end
 
-      {
+      current_graph_output = {
         vertices:       vertices,
         edges:          edges,
         detailed_edges: detailed_edges
+      }
+      return {
+        :graph_topology => current_graph_output,
+        :source_segmentation => segmentation_data # Pass the original segmentation_data through
       }
     end # end _ruby_extract_from_labels
 
