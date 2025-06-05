@@ -1,5 +1,5 @@
 require 'spec_helper'
-# require 'palette_manager' # This will be uncommmented when the file exists
+require_relative '../../lib/palette_manager'
 
 # Mock ChunkyPNG::Image and Color for testing purposes if PaletteManager
 # is expected to interact with them directly for palette extraction.
@@ -37,21 +37,7 @@ RSpec.describe PaletteManager do
     FileUtils.rm_f(empty_image_path)
   end
 
-  # Placeholder for the actual PaletteManager class
-  # This will allow specs to run before the class is defined.
-  # Remove this once `lib/palette_manager.rb` is created.
-  unless Object.const_defined?('PaletteManager')
-    class ::PaletteManager
-      def initialize(image_path = nil); @image_path = image_path; @raw_palette = []; @active_palette = []; end
-      def extract_palette_from_image(swatch_finder_method: :mock); @raw_palette = [ChunkyPNG::Color.rgb(255,0,0), ChunkyPNG::Color.rgb(0,0,255)]; @active_palette = @raw_palette.dup; end # Mocked
-      def raw_palette; @raw_palette; end
-      def active_palette; @active_palette; end
-      def add_to_active_palette(color); @active_palette << color unless @active_palette.include?(color); end
-      def remove_from_active_palette(color); @active_palette.delete(color); end
-      def clear_active_palette; @active_palette = []; end
-      def activate_all_colors; @active_palette = @raw_palette.dup; end
-    end
-  end
+  # Placeholder for the actual PaletteManager class -- REMOVED
 
 
   describe 'Palette Extraction' do
@@ -63,39 +49,58 @@ RSpec.describe PaletteManager do
       end
 
       describe '#extract_palette_from_image' do
-        it 'populates the raw palette (mocked extraction)' do
-          # This test assumes a mocking strategy for actual swatch finding
-          # For TDD, we define that the method should result in a palette.
-          # The actual swatch finding logic will be complex.
-          subject.extract_palette_from_image # Default mock
+        it 'populates the raw palette using :mock strategy for this test' do
+          # This test specifically uses the :mock strategy defined in PaletteManager
+          subject.extract_palette_from_image(swatch_finder_method: :mock)
           expect(subject.raw_palette).not_to be_empty
           expect(subject.raw_palette).to all(be_a(Integer)) # ChunkyPNG colors are integers
-        end
-
-        it 'ensures extracted raw palette contains unique colors (mocked)' do
-          # Mocking extraction that might initially produce duplicates
-          allow_any_instance_of(PaletteManager).to receive(:_perform_actual_extraction).and_return([
-            ChunkyPNG::Color.rgb(255,0,0),
-            ChunkyPNG::Color.rgb(0,0,255),
-            ChunkyPNG::Color.rgb(255,0,0) # Duplicate
-          ])
-          # We'd expect extract_palette_from_image to call _perform_actual_extraction and then unique it.
-          # For now, the placeholder PaletteManager does simple unique.
-          # This spec might need adjustment when real implementation details are known.
-          # For TDD, we state the requirement:
-          subject.instance_variable_set(:@raw_palette, [
-             ChunkyPNG::Color.rgb(255,0,0), ChunkyPNG::Color.rgb(0,0,255), ChunkyPNG::Color.rgb(255,0,0)
-          ])
-          subject.instance_variable_set(:@raw_palette, subject.raw_palette.uniq) # Simulate post-processing step
-
-          expect(subject.raw_palette.uniq.size).to eq(subject.raw_palette.size)
           expect(subject.raw_palette).to contain_exactly(ChunkyPNG::Color.rgb(255,0,0), ChunkyPNG::Color.rgb(0,0,255))
         end
 
-        it 'handles image with no discernible swatches by returning an empty raw palette (mocked)' do
-          manager = PaletteManager.new(empty_image_path)
+        it 'ensures extracted raw palette contains unique colors' do
+          # This test will use the default :simple_unique_colors strategy.
+          # The sample_palette_image_path is created with Red and Blue.
+          # The PaletteManager's extract_palette_from_image should handle uniqueness.
+
+          # Create an image with duplicate colors for the test subject
+          img_with_duplicates_path = File.join(fixture_dir, 'dup_colors.png')
+          ChunkyPNG::Image.new(3,1).tap { |img|
+            img[0,0] = ChunkyPNG::Color.rgb(255,0,0);
+            img[1,0] = ChunkyPNG::Color.rgb(0,0,255);
+            img[2,0] = ChunkyPNG::Color.rgb(255,0,0); # Duplicate Red
+          }.save(img_with_duplicates_path, :fast_rgba)
+
+          manager_with_duplicates = PaletteManager.new(img_with_duplicates_path)
+          manager_with_duplicates.extract_palette_from_image # Uses default :simple_unique_colors
+
+          expect(manager_with_duplicates.raw_palette.uniq.size).to eq(manager_with_duplicates.raw_palette.size)
+          expect(manager_with_duplicates.raw_palette).to contain_exactly(ChunkyPNG::Color.rgb(255,0,0), ChunkyPNG::Color.rgb(0,0,255))
+          FileUtils.rm_f(img_with_duplicates_path)
+        end
+
+        it 'handles image with no discernible swatches by returning an empty raw palette' do
+          # This test relies on mocking the internal _perform_actual_extraction method.
+          # The PaletteManager must use this method (or a similar one that can be mocked)
+          # when a specific swatch_finder_method is chosen.
+          manager = PaletteManager.new(empty_image_path) # empty_image_path is a 1x1 white image
+
+          # Test 1: Using the default :simple_unique_colors strategy with an empty image
+          # (after ensuring create_dummy_image helper correctly saves it)
+          # The `empty_image_path` is a 1x1 white image by default from `before` block.
+          # So it should extract one color: white.
+          # To test "no discernible swatches", we need an image that truly has no pixels or is invalid.
+          # Or, we can mock the ChunkyPNG loading to return an empty image.
+
+          allow(ChunkyPNG::Image).to receive(:from_file).with(empty_image_path).and_return(ChunkyPNG::Image.new(0,0))
+          manager.extract_palette_from_image # Uses default strategy
+          expect(manager.raw_palette).to be_empty
+
+          # Test 2: Mocking _perform_actual_extraction if a strategy uses it
+          # This requires extract_palette_from_image to have a path that calls _perform_actual_extraction
+          # and that path is triggered by a specific swatch_finder_method.
+          # Let's use the :_perform_actual_extraction_mock strategy for this.
           allow(manager).to receive(:_perform_actual_extraction).and_return([])
-          manager.extract_palette_from_image # This should call the mocked _perform_actual_extraction
+          manager.extract_palette_from_image(swatch_finder_method: :_perform_actual_extraction_mock)
           expect(manager.raw_palette).to be_empty
         end
 
