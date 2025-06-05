@@ -100,6 +100,59 @@ module QuiltGraph
     svg_lines.join("\n")
   end
 
+  # ----------------------------------------------------------------------------
+  # Checks if a graph is a "legal" quilt according to specific criteria.
+  # A legal quilt must:
+  # 1. Have all vertices with degree 2 or more.
+  # 2. Be connected.
+  # 3. Have no bridges (be 2-edge-connected).
+  # 4. Have no crossing edges (be planar).
+  #
+  # @param graph [Hash] The graph structure with :vertices and :edges.
+  # @return [Boolean] True if all checks pass, false otherwise.
+  def self.is_quilt_legal?(graph)
+    vertices = graph[:vertices]
+    edges = graph[:edges]
+
+    # Handle empty graph or graph with a single vertex early
+    return false if vertices.nil? || vertices.empty? || vertices.size == 1
+
+    adj = build_adjacency_list(graph)
+
+    # 1. Degree Check: All vertices must have degree >= 2.
+    # An empty graph or a single vertex graph cannot satisfy this.
+    # Already handled by the check above for vertices.size == 1.
+    # For other cases, compute degrees.
+    degrees = compute_degrees(adj)
+    return false if degrees.empty? # Should not happen if vertices is not empty
+    degrees.each_value do |degree|
+      return false if degree < 2
+    end
+
+    all_vertex_ids = vertices.keys
+
+    # 2. Connectivity Check: The graph must be connected.
+    # An empty graph is trivially connected/not disconnected.
+    # A graph with vertices must have only one component.
+    # (already handled empty graph, so vertices.keys is not empty here)
+    components = find_connected_components(all_vertex_ids, adj)
+    return false if components.size > 1
+
+    # 3. Bridge Check: The graph must have no bridges.
+    # (i.e., it must be 2-edge-connected)
+    # An empty graph or a graph with a single vertex is not 2-edge-connected.
+    # (already handled empty/single vertex graph)
+    bridges = find_bridges(all_vertex_ids, adj)
+    return false unless bridges.empty?
+
+    # 4. Planarity Check: The graph must have no crossing edges.
+    # (This uses a geometric check for crossings)
+    crossing = find_first_crossing(graph)
+    return false if crossing # A crossing was found
+
+    true # All checks passed
+  end
+
   private
 
   def self.new_vertex_id(graph)
