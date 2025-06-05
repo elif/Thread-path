@@ -131,26 +131,54 @@ RSpec.describe Impressionist do
 
         result = Impressionist.process(input_path, run_options)
 
-        expect(result).to have_key(:image)
-        expect(result).to have_key(:labels)
-        expect(result).to have_key(:blob_count)
-
-        expect(result[:image]).to be_a(ChunkyPNG::Image)
-        expect(result[:image].width).to eq(1)
-        expect(result[:image].height).to eq(1)
-
-        expect(result[:labels]).to be_an(Array)
-        expect(result[:labels].size).to eq(result[:image].height)
-        expect(result[:labels].first.size).to eq(result[:image].width)
-        expect(result[:blob_count]).to be_an(Integer)
-        expect(result[:blob_count]).to be >= 0
+        if implementation == :chunky_png
+          expect(result).to have_key(:processed_image)
+          expect(result).to have_key(:image_attributes)
+          expect(result).to have_key(:segmentation_result)
+          expect(result[:processed_image]).to be_a(ChunkyPNG::Image)
+          expect(result[:processed_image].width).to eq(1)
+          expect(result[:processed_image].height).to eq(1)
+          expect(result[:image_attributes][:width]).to eq(1)
+          expect(result[:image_attributes][:height]).to eq(1)
+          expect(result[:segmentation_result][:labels]).to be_an(Array)
+          expect(result[:segmentation_result][:labels].size).to eq(result[:processed_image].height)
+          expect(result[:segmentation_result][:labels].first.size).to eq(result[:processed_image].width)
+          expect(result[:segmentation_result][:blob_count]).to be_an(Integer)
+          expect(result[:segmentation_result][:blob_count]).to be >= 0
+          expect(result[:segmentation_result][:width]).to eq(1)
+          expect(result[:segmentation_result][:height]).to eq(1)
+          expect(result[:segmentation_result]).to have_key(:avg_colors)
+        else
+          # Existing checks for other implementations (matzeye, palette_quantize)
+          expect(result).to have_key(:image)
+          expect(result).to have_key(:labels)
+          expect(result).to have_key(:blob_count)
+          expect(result[:image]).to be_a(ChunkyPNG::Image)
+          expect(result[:image].width).to eq(1)
+          expect(result[:image].height).to eq(1)
+          expect(result[:labels]).to be_an(Array)
+          expect(result[:labels].size).to eq(result[:image].height)
+          expect(result[:labels].first.size).to eq(result[:image].width)
+          expect(result[:blob_count]).to be_an(Integer)
+          expect(result[:blob_count]).to be >= 0
+        end
       end
     end
 
     context "with default (chunky_png) implementation" do
-      it 'processes an image and returns a ChunkyPNG::Image based result' do
-        result = Impressionist.process(input_path, options)
-        expect(result[:image]).to be_a(ChunkyPNG::Image)
+      it 'processes an image and returns the new data structure' do
+        result = Impressionist.process(input_path, options.merge(implementation: :chunky_png))
+        expect(result).to have_key(:processed_image)
+        expect(result[:processed_image]).to be_a(ChunkyPNG::Image)
+        expect(result).to have_key(:image_attributes)
+        expect(result[:image_attributes][:width]).to eq(1) # Assuming input_path is 1x1
+        expect(result[:image_attributes][:height]).to eq(1)
+        expect(result).to have_key(:segmentation_result)
+        expect(result[:segmentation_result][:labels]).to be_an(Array)
+        expect(result[:segmentation_result][:avg_colors]).to be_an(Array)
+        expect(result[:segmentation_result][:blob_count]).to be_an(Integer)
+        expect(result[:segmentation_result][:width]).to eq(1)
+        expect(result[:segmentation_result][:height]).to eq(1)
       end
     end
 
@@ -236,19 +264,43 @@ RSpec.describe Impressionist do
       img
     end
 
-    it 'Impressionist.process_image applies quantization and averages original colors' do
+    it 'Impressionist.process_image applies quantization and averages original colors with new structure' do
       opts = { quant_interval: 16, min_blob_size: 0, connectivity: 4 }
-      result = Impressionist.process_image(quant_test_img, opts)
-      expected_color = ChunkyPNG::Color.rgb(11, 21, 29)
-      expect(result[:image][0,0]).to eq(expected_color)
+      result = Impressionist.process_image(quant_test_img, opts) # Direct call
+
+      expect(result).to have_key(:processed_image)
+      expect(result).to have_key(:image_attributes)
+      expect(result[:image_attributes][:width]).to eq(quant_test_img.width)
+      expect(result[:image_attributes][:height]).to eq(quant_test_img.height)
+
+      expect(result).to have_key(:segmentation_result)
+      segmentation = result[:segmentation_result]
+      expect(segmentation[:labels]).to be_an(Array)
+      expect(segmentation[:avg_colors]).to be_an(Array)
+      expect(segmentation[:blob_count]).to be_an(Integer)
+      expect(segmentation[:width]).to eq(quant_test_img.width)
+      expect(segmentation[:height]).to eq(quant_test_img.height)
+
+      expected_color = ChunkyPNG::Color.rgb(11, 21, 29) # Based on original test logic for color averaging
+      expect(result[:processed_image][0,0]).to eq(expected_color)
     end
 
-    it 'Impressionist.process_image applies box blur' do
+    it 'Impressionist.process_image applies box blur with new structure' do
       blur_test_img = ChunkyPNG::Image.new(3, 3, ChunkyPNG::Color::BLACK)
       blur_test_img[1,1] = ChunkyPNG::Color.rgb(90, 90, 90)
       opts = { blur: true, blur_radius: 1, quant_interval: 1, min_blob_size: 0 }
-      result = Impressionist.process_image(blur_test_img, opts)
-      expect(result[:image][1,1]).to eq(ChunkyPNG::Color.rgb(10,10,10))
+      result = Impressionist.process_image(blur_test_img, opts) # Direct call
+
+      expect(result).to have_key(:processed_image)
+      expect(result[:processed_image][1,1]).to eq(ChunkyPNG::Color.rgb(10,10,10)) # Based on original test logic for blur
+
+      expect(result).to have_key(:image_attributes)
+      expect(result[:image_attributes][:width]).to eq(blur_test_img.width)
+      expect(result[:image_attributes][:height]).to eq(blur_test_img.height)
+
+      expect(result).to have_key(:segmentation_result)
+      expect(result[:segmentation_result][:width]).to eq(blur_test_img.width)
+      expect(result[:segmentation_result][:height]).to eq(blur_test_img.height)
     end
   end
 
