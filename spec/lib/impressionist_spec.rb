@@ -18,6 +18,46 @@ RSpec.configure do |config|
   config.extend ImpressionistSpecHelpers
 end
 
+# Placeholder for PaletteManager if options require it
+unless Object.const_defined?('PaletteManager')
+  class ::PaletteManager
+    attr_reader :active_palette
+    def initialize(image_path = nil); @raw_palette = []; @active_palette = []; end
+    # Simulate extraction for mock purposes
+    def extract_palette_from_image(*args); @raw_palette = [ChunkyPNG::Color.rgb(255,0,0), ChunkyPNG::Color.rgb(0,0,255)]; @active_palette = @raw_palette.dup; end
+    def add_to_active_palette(color); @active_palette << color unless @active_palette.include?(color); end
+    def remove_from_active_palette(color); @active_palette.delete(color); end
+    def clear_active_palette; @active_palette = []; end
+    def activate_all_colors; @active_palette = @raw_palette.dup; end
+
+  end
+end
+
+module Impressionist
+  # Placeholder for PaletteQuantizeAdapter
+  unless const_defined?('PaletteQuantizeAdapter')
+    module PaletteQuantizeAdapter
+      def self.process_image(image, options)
+        # Mocked response for TDD
+        processed_image = ChunkyPNG::Image.new(image.width, image.height, ChunkyPNG::Color::BLACK)
+        mock_labels = Array.new(image.height) { Array.new(image.width, 0) }
+        mock_blob_count = 0
+
+        if options[:palette_object] && !options[:palette_object].active_palette.empty?
+          # Simple mock: if red is in active palette, make first pixel red and count one blob.
+          # This helps verify options are passed and have some effect.
+          if options[:palette_object].active_palette.include?(ChunkyPNG::Color.rgb(255,0,0))
+            processed_image[0,0] = ChunkyPNG::Color.rgb(255,0,0) if image.width > 0 && image.height > 0
+            mock_labels[0][0] = 1 if image.height > 0 && image.width > 0
+            mock_blob_count = 1 if image.height > 0 && image.width > 0
+          end
+        end
+        { image: processed_image, labels: mock_labels, blob_count: mock_blob_count }
+      end
+    end
+  end
+end
+
 RSpec.describe Impressionist do
   let(:fixture_dir) { File.expand_path('../../fixtures', __FILE__) }
   let(:input_path) { File.join(fixture_dir, 'test_image.png') }
@@ -89,11 +129,26 @@ RSpec.describe Impressionist do
   end
 
   describe '.process' do
-    let(:options) { { quant_interval: 8 } }
+    let(:options) { { quant_interval: 8 } } # Default options for some tests
+    let(:red_color) { ChunkyPNG::Color.rgb(255,0,0) }
+    let(:blue_color) { ChunkyPNG::Color.rgb(0,0,255) }
 
-    describe_implementations [:chunky_png, :matzeye] do |implementation|
+    # Updated to include :palette_quantize
+    describe_implementations [:chunky_png, :matzeye, :palette_quantize] do |implementation|
       it "processes an image and returns the expected structure for #{implementation}" do
         run_options = options.merge(implementation: implementation)
+
+        # Special setup for palette_quantize if it's the current implementation
+        if implementation == :palette_quantize
+          mock_palette = PaletteManager.new
+          # Ensure active_palette is not empty for the mock adapter to do something
+          mock_palette.instance_variable_set(:@active_palette, [red_color])
+          run_options[:palette_object] = mock_palette
+          # Ensure other necessary options for palette_quantize are present if they don't have defaults in main code yet
+          run_options[:island_depth] ||= 0
+          run_options[:island_threshold] ||= 0
+        end
+
         result = Impressionist.process(input_path, run_options)
 
         expect(result).to have_key(:image)
@@ -116,6 +171,74 @@ RSpec.describe Impressionist do
       it 'processes an image and returns a ChunkyPNG::Image based result' do
         result = Impressionist.process(input_path, options)
         expect(result[:image]).to be_a(ChunkyPNG::Image)
+      end
+    end
+
+    context "with :palette_quantize implementation" do
+      let(:implementation_type) { :palette_quantize }
+      let(:sample_input_image) { ChunkyPNG::Image.new(10, 10, ChunkyPNG::Color::WHITE) } # A bit larger for testing
+
+      let(:mock_palette) do
+        pm = PaletteManager.new
+        pm.instance_variable_set(:@raw_palette, [red_color, blue_color])
+        pm.instance_variable_set(:@active_palette, [red_color]) # Only red is active for this test case
+        pm
+      end
+
+      let(:palette_options) do
+        {
+          implementation: implementation_type,
+          palette_object: mock_palette,
+          island_depth: 1,
+          island_threshold: 5
+        }
+      end
+
+      it 'processes an image and returns the expected structure' do
+        # Allow the original method to be called but spy on its arguments and return value
+        allow(Impressionist::PaletteQuantizeAdapter).to receive(:process_image).and_call_original.and_wrap_original do |original_method, image, opts|
+          expect(opts).to include(:palette_object)
+          expect(opts[:palette_object]).to be_a(PaletteManager)
+          original_method.call(image, opts)
+        end
+
+        result = Impressionist.process(sample_input_image, palette_options)
+
+        expect(result).to have_key(:image)
+        expect(result[:image]).to be_a(ChunkyPNG::Image)
+        expect(result[:image].width).to eq(sample_input_image.width)
+        expect(result[:image].height).to eq(sample_input_image.height)
+
+        # Based on the simple mock where image's first pixel turns red if red is in active_palette
+        expect(result[:image][0,0]).to eq(red_color) if sample_input_image.width > 0 && sample_input_image.height > 0
+
+        expect(result).to have_key(:labels)
+        expect(result[:labels]).to be_an(Array)
+        expect(result[:labels].size).to eq(sample_input_image.height)
+        result[:labels].each { |row| expect(row.size).to eq(sample_input_image.width) } if sample_input_image.height > 0
+
+        expect(result).to have_key(:blob_count)
+        expect(result[:blob_count]).to be_an(Integer)
+        # Based on mock (1 blob if red is active and image has size)
+        expected_blob_count = (sample_input_image.width > 0 && sample_input_image.height > 0 && mock_palette.active_palette.include?(red_color)) ? 1 : 0
+        expect(result[:blob_count]).to eq(expected_blob_count)
+      end
+
+      it 'ensures Impressionist.process calls the PaletteQuantizeAdapter with correct arguments' do
+        expect(Impressionist::PaletteQuantizeAdapter).to receive(:process_image)
+          .with(sample_input_image, hash_including(palette_options))
+          .and_return({ image: ChunkyPNG::Image.new(1,1), labels: [[]], blob_count: 0 }) # minimal valid structure
+
+        Impressionist.process(sample_input_image, palette_options)
+      end
+
+      it 'passes options like :island_depth and :island_threshold to the adapter' do
+         options_with_specific_island_params = palette_options.merge(island_depth: 2, island_threshold: 10)
+         expect(Impressionist::PaletteQuantizeAdapter).to receive(:process_image)
+          .with(anything, hash_including(island_depth: 2, island_threshold: 10))
+          .and_return({ image: ChunkyPNG::Image.new(1,1), labels: [[]], blob_count: 0 })
+
+         Impressionist.process(sample_input_image, options_with_specific_island_params)
       end
     end
   end
@@ -149,7 +272,7 @@ RSpec.describe Impressionist do
 
   # Specific tests for the MatzEyeAdapter's integration via Impressionist
   describe Impressionist::MatzEyeAdapter do
-    let(:fixture_dir) { File.expand_path('../../fixtures', __FILE__) }
+    # let(:fixture_dir) { File.expand_path('../../fixtures', __FILE__) } # Already defined at top
     let(:larger_input_path) { File.join(fixture_dir, 'sample_image.png') }
     let(:larger_chunky_image) { ChunkyPNG::Image.from_file(larger_input_path) }
 
@@ -219,6 +342,37 @@ RSpec.describe Impressionist do
           expect(checksum_low).not_to eq(checksum_high)
         end
       end
+    end
+  end
+
+  # Add tests for .available_implementations and .default_options related to palette_quantize
+  describe '.available_implementations' do
+    it 'includes :palette_quantize' do
+      # This assumes Impressionist::PaletteQuantizeAdapter is defined and loaded.
+      # Impressionist.rb should dynamically add :palette_quantize to its list.
+      # For this spec, we will mock that behavior or assume it's present if adapter is defined.
+      # If Impressionist.available_implementations is static, this test might need adjustment
+      # or the main code needs to be changed to dynamically register adapters.
+      # For now, let's assume it's added if the constant is defined.
+      allow(Impressionist).to receive(:available_implementations).and_call_original # ensure we don't break other tests
+      expect(Impressionist.available_implementations).to include(:palette_quantize)
+    end
+  end
+
+  describe '.default_options' do
+    it 'includes default values for :palette_quantize options' do
+      # Assuming default options for palette_quantize will be added to Impressionist
+      expected_defaults = {
+        palette_object: nil,
+        island_depth: 0,
+        island_threshold: 0
+        # Add other relevant defaults as they are defined
+      }
+      # This might require Impressionist.default_options to be updated in the main code
+      # or we mock it here for the purpose of the test if it's dynamically generated.
+      # For now, we expect it to be part of the returned hash.
+      expect(Impressionist.default_options).to include(:palette_quantize)
+      expect(Impressionist.default_options[:palette_quantize]).to eq(expected_defaults)
     end
   end
 end
