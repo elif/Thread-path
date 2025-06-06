@@ -127,6 +127,17 @@ RSpec.describe PaletteQuantizer do
         expect(processed_data).to eq(expected_data)
       end
 
+      it 'treats diagonal connections based on connectivity parameter' do
+        diagonal_islands = create_pixel_data(2, 2, [red, blue, blue, red])
+        all_blue = create_pixel_data(2, 2, [blue, blue, blue, blue])
+
+        result4 = PaletteQuantizer.remove_islands(diagonal_islands.map(&:dup), 1, 1, sample_palette, 4)
+        expect(result4).to eq(all_blue)
+
+        result8 = PaletteQuantizer.remove_islands(diagonal_islands.map(&:dup), 1, 1, sample_palette, 8)
+        expect(result8).to eq(diagonal_islands)
+      end
+
       let(:pixel_data_checkerboard) do
         # R B R
         # B R B
