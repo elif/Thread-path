@@ -104,17 +104,24 @@ module QuiltGraph
     svg_lines = []
     svg_lines << '<?xml version="1.0" encoding="UTF-8"?>'
     svg_lines << "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"100%\" height=\"100%\" viewBox=\"#{vb_x} #{vb_y} #{vb_width} #{vb_height}\">"
-    svg_lines << "  <style>line { stroke: black; stroke-width: 1; } circle { fill: red; }</style>"
+    svg_lines << "  <style>polygon { stroke: black; stroke-width: 1; } line { stroke: black; stroke-width: 1; } circle { fill: red; stroke: black; stroke-width: 0.5; }</style>"
 
-    edges.each do |(u, v)|
-      next unless vertices[u] && vertices[v] # Ensure vertices exist
-      x1, y1 = vertices[u]
-      x2, y2 = vertices[v]
-      svg_lines << "  <line x1=\"#{x1}\" y1=\"#{y1}\" x2=\"#{x2}\" y2=\"#{y2}\" />"
+    # Render each quilt piece
+    if graph[:faces]
+      graph[:faces].each_value do |quilt_piece|
+        if quilt_piece.is_a?(QuiltGraph::QuiltPiece) && quilt_piece.respond_to?(:to_svg)
+          piece_svg_content = quilt_piece.to_svg(vertices) # vertices is graph[:vertices]
+          svg_lines << piece_svg_content unless piece_svg_content.empty?
+        end
+      end
     end
 
+    # Draw vertices (circles) on top of pieces
     vertices.each do |_, (x, y)|
-      svg_lines << "  <circle cx=\"#{x}\" cy=\"#{y}\" r=\"2\" />"
+      # Ensure x and y are numeric before attempting to draw the circle
+      if x.is_a?(Numeric) && y.is_a?(Numeric)
+        svg_lines << "  <circle cx=\"#{x}\" cy=\"#{y}\" r=\"2\" />"
+      end
     end
 
     svg_lines << "</svg>"

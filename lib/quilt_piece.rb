@@ -9,45 +9,45 @@ module QuiltGraph
       @color = color
     end
 
-    # Method to generate SVG for this piece
+    # Method to generate SVG elements (polygon and lines) for this piece
     # It will need access to the main graph's vertex coordinates
     def to_svg(all_graph_vertices)
-      return "<svg />" if @vertices.empty? || @edges.empty?
+      return "" if @vertices.empty? # No vertices, no piece
 
-      # Determine bounding box for this piece
       piece_coords = @vertices.map { |v_id| all_graph_vertices[v_id] }.compact
-      return "<svg />" if piece_coords.empty?
+      return "" if piece_coords.empty? || piece_coords.length < 3 # Not enough points for a polygon
 
-      xs = piece_coords.map { |pt| pt[0] }
-      ys = piece_coords.map { |pt| pt[1] }
-      min_x, max_x = xs.minmax
-      min_y, max_y = ys.minmax
+      svg_elements = []
 
-      min_x ||= 0; max_x ||= 0; min_y ||= 0; max_y ||= 0;
-
-      pad = 10.0
-      vb_x      = min_x - pad
-      vb_y      = min_y - pad
-      vb_width  = (max_x - min_x) + 2 * pad
-      vb_height = (max_y - min_y) + 2 * pad
-      vb_width = pad * 2 if vb_width.abs < 1e-6 # Ensure non-zero width/height
-      vb_height = pad * 2 if vb_height.abs < 1e-6
-
-
-      svg_lines = []
-      svg_lines << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-      svg_lines << "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"100%\" height=\"100%\" viewBox=\"#{vb_x} #{vb_y} #{vb_width} #{vb_height}\">"
-      # Style for the piece, using its color
       # Convert color array [r,g,b] to "rgb(r,g,b)" string if necessary
-      fill_color_string = @color.is_a?(Array) ? "rgb(#{@color.join(',')})" : "gray" # Default to gray if color format is unexpected
-      svg_lines << "  <style>polygon { fill: #{fill_color_string}; stroke: black; stroke-width: 1; }</style>"
+      fill_color_string = @color.is_a?(Array) ? "rgb(#{@color.join(',')})" : "gray" # Default to gray
 
       # Create a polygon from the face's vertices
+      # Style for fill is applied inline; stroke and stroke-width will be handled by parent SVG style
       points_str = piece_coords.map { |pt| "#{pt[0]},#{pt[1]}" }.join(" ")
-      svg_lines << "  <polygon points=\"#{points_str}\" />"
+      svg_elements << "  <polygon points=\"#{points_str}\" fill=\"#{fill_color_string}\" />"
 
-      svg_lines << "</svg>"
-      svg_lines.join("\n")
+      # Add edges as lines
+      # Stroke and stroke-width will be handled by parent SVG style for 'line'
+      @edges.each do |v1_id, v2_id|
+        pt1 = all_graph_vertices[v1_id]
+        pt2 = all_graph_vertices[v2_id]
+
+        if pt1 && pt2
+          # Ensure points are numbers before creating line, protects against nil or non-numeric coords
+          if pt1.all? { |c| c.is_a?(Numeric) } && pt2.all? { |c| c.is_a?(Numeric) }
+            svg_elements << "  <line x1=\"#{pt1[0]}\" y1=\"#{pt1[1]}\" x2=\"#{pt2[0]}\" y2=\"#{pt2[1]}\" />"
+          else
+            # Optionally log or handle malformed point data
+            # $stderr.puts "Warning: Skipping edge due to invalid coordinate data for piece #{@id}"
+          end
+        else
+          # Optionally log or handle missing vertex data
+          # $stderr.puts "Warning: Skipping edge due to missing vertex data for piece #{@id}"
+        end
+      end
+
+      svg_elements.join("\n")
     end
   end
 end
