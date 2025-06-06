@@ -1,4 +1,5 @@
 require 'set'
+require_relative 'quilt_piece'
 
 module QuiltGraph
   # ----------------------------------------------------------------------------
@@ -324,7 +325,20 @@ module QuiltGraph
               face_color = avg_colors_map[blob_id]
             end
           end
-          graph[:faces][new_face_id] = { vertices: current_face_vertices, color: face_color }
+
+          # Create and store a QuiltPiece instance
+          face_edges = []
+          current_face_vertices.each_with_index do |v_id, i|
+            next_v_id = current_face_vertices[(i + 1) % current_face_vertices.size]
+            face_edges << [v_id, next_v_id].sort # Store edges consistently
+          end
+
+          graph[:faces][new_face_id] = QuiltGraph::QuiltPiece.new(
+            id: new_face_id,
+            vertices: current_face_vertices,
+            edges: face_edges,
+            color: face_color
+          )
         end
       end
     end
@@ -335,13 +349,14 @@ module QuiltGraph
     # assume one is the outer face and color it with a background sample (e.g., from labels_matrix[0][0]).
     if graph[:faces].size == 2 && labels_matrix && avg_colors_map
       face_ids = graph[:faces].keys
-      face1 = graph[:faces][face_ids[0]]
-      face2 = graph[:faces][face_ids[1]]
+      face1_piece = graph[:faces][face_ids[0]] # This is now a QuiltPiece instance
+      face2_piece = graph[:faces][face_ids[1]] # This is now a QuiltPiece instance
 
-      if Set.new(face1[:vertices]) == Set.new(face2[:vertices]) && face1[:color] == face2[:color]
-        # Assume face2 is the "outer" or second traversal, color it with background
+      # Access attributes like face1_piece.vertices and face1_piece.color
+      if Set.new(face1_piece.vertices) == Set.new(face2_piece.vertices) && face1_piece.color == face2_piece.color
         bg_blob_id = labels_matrix[0][0] # Sample top-left for background
-        face2[:color] = avg_colors_map[bg_blob_id]
+        # Update color of face2_piece (the QuiltPiece object)
+        face2_piece.instance_variable_set(:@color, avg_colors_map[bg_blob_id])
       end
     end
   end
@@ -545,5 +560,30 @@ module QuiltGraph
     graph[:edges] << [u2, new_v_id].sort
     graph[:edges] << [new_v_id, v2].sort
     graph[:edges].uniq! # Ensure no duplicates if, e.g., u1 or v1 was new_v_id (not possible here)
+  end
+
+  # ----------------------------------------------------------------------------
+  # Generates SVG strings for each quilt piece (face) in the graph.
+  #
+  # @param graph [Hash] The graph structure, expected to contain:
+  #   - graph[:faces]: A hash mapping face_id to QuiltPiece objects.
+  #   - graph[:vertices]: A hash mapping vertex_id to [x,y] coordinates.
+  # @return [Hash] A hash mapping face_id to its SVG string representation.
+  def self.generate_piece_svgs(graph)
+    piece_svgs = {}
+    return piece_svgs unless graph && graph[:faces] && graph[:vertices]
+
+    graph[:faces].each do |face_id, quilt_piece|
+      # Ensure quilt_piece is indeed a QuiltPiece object
+      if quilt_piece.is_a?(QuiltGraph::QuiltPiece) && quilt_piece.respond_to?(:to_svg)
+        svg_string = quilt_piece.to_svg(graph[:vertices])
+        piece_svgs[face_id] = svg_string
+      else
+        # Optional: log a warning or handle cases where a face is not a QuiltPiece object
+        # STDERR.puts "Warning: Item with ID #{face_id} in graph[:faces] is not a valid QuiltPiece object or does not respond to to_svg."
+      end
+    end
+
+    piece_svgs
   end
 end

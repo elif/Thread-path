@@ -1,5 +1,6 @@
 require 'spec_helper'
 require 'quilt_graph' # Assumes lib is in $LOAD_PATH via spec_helper
+require_relative '../../lib/quilt_piece' # Added for QuiltPiece class
 require 'set'
 require 'chunky_png' # For ChunkyPNG::Color
 
@@ -383,22 +384,25 @@ RSpec.describe QuiltGraph do
       expect(all_faces_data.size).to eq(2), "Expected 2 faces, got #{corrected_quilt_graph[:faces].keys.size}. Faces: #{corrected_quilt_graph[:faces]}"
 
       expected_verts_set = Set.new([:v1, :v2, :v3, :v4])
-      all_faces_data.each do |f_data|
-        expect(f_data).to be_a(Hash), "Face data should be a Hash {vertices: ..., color: ...}"
-        expect(Set.new(f_data[:vertices])).to eq(expected_verts_set)
-        expect(f_data[:vertices].size).to eq(4)
+      expected_edges_for_square_face = Set.new([
+        [:v1, :v2].sort, [:v2, :v3].sort, [:v3, :v4].sort, [:v4, :v1].sort
+      ])
+
+      all_faces_data.each do |quilt_piece|
+        expect(quilt_piece).to be_a(QuiltGraph::QuiltPiece)
+        expect(Set.new(quilt_piece.vertices)).to eq(expected_verts_set)
+        expect(quilt_piece.vertices.size).to eq(4)
+        expect(Set.new(quilt_piece.edges)).to eq(expected_edges_for_square_face) # Check edges
       end
 
-      colors_found = all_faces_data.map { |f_data| f_data[:color] }.compact
+      colors_found = all_faces_data.map(&:color).compact
 
       expect(colors_found).to include(red), "Expected to find red color. Found: #{colors_found}"
-      expect(all_faces_data.count { |f_data| f_data[:color] == red }).to eq(1), "Expected 1 red face. Data: #{all_faces_data}"
+      expect(all_faces_data.count { |qp| qp.color == red }).to eq(1), "Expected 1 red face. Data: #{all_faces_data.map(&:id)}"
 
       # The other face should not be red. It could be blue or nil.
-      expect(all_faces_data.count { |f_data| f_data[:color] != red }).to eq(1)
-      # Optionally, be more specific if the outer face color is reliably determined by mock_labels_matrix[0][0] or similar
-      # For this setup, the outer face centroid is likely to hit (0,0) after clamping, which is blob_id 2 (blue).
-      # expect(all_faces_data.one? { |f_data| f_data[:color] == blue }).to be true
+      # Based on the logic, the outer face should get the background color (blue).
+      expect(all_faces_data.count { |qp| qp.color == blue }).to eq(1), "Expected 1 blue (outer) face. Data: #{all_faces_data.map(&:id)}"
     end
 
     it 'identifies faces for two adjacent squares (domino shape)' do
@@ -440,28 +444,122 @@ RSpec.describe QuiltGraph do
       }
       corrected_quilt_graph = QuiltGraph.correct_quilt(blob_graph_input_for_quilt)
 
-      all_faces_data = corrected_quilt_graph[:faces].values
-      expect(all_faces_data.size).to eq(3), "Expected 3 faces. Got: #{corrected_quilt_graph[:faces].keys}"
+      all_quilt_pieces = corrected_quilt_graph[:faces].values
+      expect(all_quilt_pieces.size).to eq(3), "Expected 3 faces. Got: #{corrected_quilt_graph[:faces].keys}"
 
-      expected_face1_verts = Set.new([:v1, :v2, :v3, :v4])
-      expected_face2_verts = Set.new([:v2, :v3, :v6, :v5])
-      expected_outer_face_verts = Set.new([:v1, :v4, :v3, :v6, :v5, :v2])
+      expected_face1_verts_set = Set.new([:v1, :v2, :v3, :v4]) # Left square
+      expected_face1_edges_set = Set.new([[:v1,:v2],[:v2,:v3],[:v3,:v4],[:v4,:v1]].map(&:sort))
 
-      face1_data = all_faces_data.find { |fd| Set.new(fd[:vertices]) == expected_face1_verts }
-      face2_data = all_faces_data.find { |fd| Set.new(fd[:vertices]) == expected_face2_verts }
-      outer_face_data = all_faces_data.find { |fd| Set.new(fd[:vertices]) == expected_outer_face_verts }
+      expected_face2_verts_set = Set.new([:v2, :v3, :v6, :v5]) # Right square
+      expected_face2_edges_set = Set.new([[:v2,:v3],[:v3,:v6],[:v6,:v5],[:v5,:v2]].map(&:sort))
 
-      expect(face1_data).not_to be_nil, "Face 1 not found"
-      expect(face1_data[:color]).to eq(red), "Face 1 color mismatch. Expected red, got #{face1_data[:color]}"
-      expect(face1_data[:vertices].size).to eq(4)
+      # Outer face vertices are ordered in CCW from _identify_faces point of view.
+      # The exact order depends on traversal start. Set comparison is robust.
+      expected_outer_face_verts_set = Set.new([:v1, :v4, :v3, :v6, :v5, :v2])
+      expected_outer_face_edges_set = Set.new([[:v1,:v4],[:v4,:v3],[:v3,:v6],[:v6,:v5],[:v5,:v2],[:v2,:v1]].map(&:sort))
 
-      expect(face2_data).not_to be_nil, "Face 2 not found"
-      expect(face2_data[:color]).to eq(green), "Face 2 color mismatch. Expected green, got #{face2_data[:color]}"
-      expect(face2_data[:vertices].size).to eq(4)
 
-      expect(outer_face_data).not_to be_nil, "Outer face not found"
-      expect(outer_face_data[:color]).to eq(blue), "Outer face color mismatch. Expected blue, got #{outer_face_data[:color]}"
-      expect(outer_face_data[:vertices].size).to eq(6)
+      face1_piece = all_quilt_pieces.find { |qp| Set.new(qp.vertices) == expected_face1_verts_set }
+      face2_piece = all_quilt_pieces.find { |qp| Set.new(qp.vertices) == expected_face2_verts_set }
+      outer_face_piece = all_quilt_pieces.find { |qp| Set.new(qp.vertices) == expected_outer_face_verts_set }
+
+      expect(face1_piece).not_to be_nil, "Face 1 (left square) not found"
+      expect(face1_piece).to be_a(QuiltGraph::QuiltPiece)
+      expect(face1_piece.color).to eq(red), "Face 1 color mismatch. Expected red, got #{face1_piece.color}"
+      expect(face1_piece.vertices.size).to eq(4)
+      expect(Set.new(face1_piece.edges)).to eq(expected_face1_edges_set)
+
+      expect(face2_piece).not_to be_nil, "Face 2 (right square) not found"
+      expect(face2_piece).to be_a(QuiltGraph::QuiltPiece)
+      expect(face2_piece.color).to eq(green), "Face 2 color mismatch. Expected green, got #{face2_piece.color}"
+      expect(face2_piece.vertices.size).to eq(4)
+      expect(Set.new(face2_piece.edges)).to eq(expected_face2_edges_set)
+
+
+      expect(outer_face_piece).not_to be_nil, "Outer face not found"
+      expect(outer_face_piece).to be_a(QuiltGraph::QuiltPiece)
+      expect(outer_face_piece.color).to eq(blue), "Outer face color mismatch. Expected blue, got #{outer_face_piece.color}"
+      expect(outer_face_piece.vertices.size).to eq(6)
+      expect(Set.new(outer_face_piece.edges)).to eq(expected_outer_face_edges_set)
+    end
+  end
+
+  describe '.generate_piece_svgs' do
+    let(:graph_vertices) do
+      { V1: [0,0], V2: [10,0], V3: [5,10], V4: [10,10] }
+    end
+
+    let(:piece1) do
+      QuiltGraph::QuiltPiece.new(
+        id: :F1,
+        vertices: [:V1, :V2, :V3],
+        edges: [[:V1,:V2], [:V2,:V3], [:V3,:V1]].map(&:sort),
+        color: [255,0,0] # Red
+      )
+    end
+
+    let(:piece2) do
+      QuiltGraph::QuiltPiece.new(
+        id: :F2,
+        vertices: [:V2, :V4, :V3], # Note: V4 is [10,10], V3 is [5,10]
+        edges: [[:V2,:V4], [:V4,:V3], [:V3,:V2]].map(&:sort),
+        color: [0,0,255] # Blue
+      )
+    end
+
+    let(:sample_graph_with_pieces) do
+      {
+        vertices: graph_vertices,
+        faces: { F1: piece1, F2: piece2 },
+        # Other graph elements like :edges, :_next_id etc., are not strictly needed by generate_piece_svgs
+      }
+    end
+
+    it 'returns a hash' do
+      result = QuiltGraph.generate_piece_svgs(sample_graph_with_pieces)
+      expect(result).to be_a(Hash)
+    end
+
+    it 'has keys matching the face IDs' do
+      result = QuiltGraph.generate_piece_svgs(sample_graph_with_pieces)
+      expect(result.keys).to contain_exactly(:F1, :F2)
+    end
+
+    it 'contains valid SVG strings for each piece' do
+      result = QuiltGraph.generate_piece_svgs(sample_graph_with_pieces)
+      expect(result[:F1]).to be_a(String)
+      expect(result[:F1]).to include('<svg')
+      expect(result[:F1]).to include('</svg>')
+      expect(result[:F1]).to include('<polygon points="0,0 10,0 5,10"')
+      expect(result[:F1]).to include('fill: rgb(255,0,0);')
+
+      expect(result[:F2]).to be_a(String)
+      expect(result[:F2]).to include('<svg')
+      expect(result[:F2]).to include('</svg>')
+      expect(result[:F2]).to include('<polygon points="10,0 10,10 5,10"')
+      expect(result[:F2]).to include('fill: rgb(0,0,255);')
+    end
+
+    it 'handles graph with no faces' do
+      empty_faces_graph = { vertices: graph_vertices, faces: {} }
+      result = QuiltGraph.generate_piece_svgs(empty_faces_graph)
+      expect(result).to eq({})
+    end
+
+    it 'handles graph being nil or missing keys gracefully' do
+      expect(QuiltGraph.generate_piece_svgs(nil)).to eq({})
+      expect(QuiltGraph.generate_piece_svgs({ vertices: graph_vertices })).to eq({}) # Missing :faces
+      expect(QuiltGraph.generate_piece_svgs({ faces: {F1: piece1} })).to eq({})    # Missing :vertices
+    end
+
+    it 'skips items in faces that are not QuiltPiece objects' do
+      graph_with_invalid_face = {
+        vertices: graph_vertices,
+        faces: { F1: piece1, F_invalid: { some: "data" } }
+      }
+      result = QuiltGraph.generate_piece_svgs(graph_with_invalid_face)
+      expect(result.keys).to contain_exactly(:F1)
+      expect(result[:F1]).to include('fill: rgb(255,0,0);')
     end
   end
 
