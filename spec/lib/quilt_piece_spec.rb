@@ -209,5 +209,61 @@ RSpec.describe QuiltGraph::QuiltPiece do
       end
     end
 
+    context 'with varied coordinates (negative and zero)' do
+      let(:varied_coords) do
+        {
+          vt1: [-50, 0],
+          vt2: [50, -50],
+          vt3: [0, 50]
+        }
+      end
+      let(:piece_vertices) { [:vt1, :vt2, :vt3] }
+      let(:piece_edges) { [[:vt1, :vt2], [:vt2, :vt3], [:vt3, :vt1]] }
+      let(:piece_color) { [0, 255, 0] } # Green
+      let(:varied_coord_piece) do
+        QuiltGraph::QuiltPiece.new(id: :VC1, vertices: piece_vertices, edges: piece_edges, color: piece_color)
+      end
+
+      subject { varied_coord_piece.to_svg(varied_coords) }
+
+      it 'renders a polygon with correct negative/zero point coordinates' do
+        expect(subject).to include('points="-50,0 50,-50 0,50"')
+        expect(subject).to match(/fill="rgb\(0,255,0\)"/)
+      end
+
+      it 'renders all edges with correct negative/zero line coordinates' do
+        expect(subject.scan(/<line/).count).to eq(3)
+        expect(subject).to include('<line x1="-50" y1="0" x2="50" y2="-50" />')   # vt1-vt2
+        expect(subject).to include('<line x1="50" y1="-50" x2="0" y2="50" />')   # vt2-vt3
+        expect(subject).to include('<line x1="0" y1="50" x2="-50" y2="0" />')     # vt3-vt1
+      end
+    end
+
+    context 'with floating point-like coordinates' do
+      let(:float_coords) do
+        {
+          vf1: [10.0, 10.0],
+          vf2: [100.5, 10.0],
+          vf3: [50.0, 100.5]
+        }
+      end
+      let(:piece_vertices) { [:vf1, :vf2, :vf3] }
+      let(:piece_edges) { [[:vf1, :vf2], [:vf2, :vf3], [:vf3, :vf1]] }
+      let(:piece_color) { [0, 0, 255] } # Blue
+      let(:float_coord_piece) do
+        QuiltGraph::QuiltPiece.new(id: :FC1, vertices: piece_vertices, edges: piece_edges, color: piece_color)
+      end
+
+      subject { float_coord_piece.to_svg(float_coords) }
+
+      it 'renders polygon and lines with floating point coordinate values correctly in the string' do
+        expect(subject).to include('points="10.0,10.0 100.5,10.0 50.0,100.5"')
+        expect(subject).to match(/fill="rgb\(0,0,255\)"/)
+        expect(subject.scan(/<line/).count).to eq(3)
+        expect(subject).to include('<line x1="10.0" y1="10.0" x2="100.5" y2="10.0" />')  # vf1-vf2
+        expect(subject).to include('<line x1="100.5" y1="10.0" x2="50.0" y2="100.5" />') # vf2-vf3
+        expect(subject).to include('<line x1="50.0" y1="100.5" x2="10.0" y2="10.0" />')  # vf3-vf1
+      end
+    end
   end
 end

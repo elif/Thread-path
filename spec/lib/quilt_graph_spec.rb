@@ -248,6 +248,209 @@ RSpec.describe QuiltGraph do
         expect(subject).to match(/viewBox="-60\.0 -30\.0 120\.0 120\.0"/)
       end
     end
+
+    # Helper method for generating grid graph data
+    def generate_grid_graph(rows, cols, piece_size)
+      graph_vertices = {}
+      graph_faces = {}
+      # Generate vertices
+      (0..rows).each do |r|
+        (0..cols).each do |c|
+          v_id = "v_#{r}_#{c}".to_sym
+          graph_vertices[v_id] = [c * piece_size, r * piece_size]
+        end
+      end
+
+      # Generate faces (QuiltPiece objects)
+      (0...rows).each do |r|
+        (0...cols).each do |c|
+          face_id = "f_#{r}_#{c}".to_sym
+          v1_id = "v_#{r}_#{c}".to_sym     # Top-left
+          v2_id = "v_#{r}_#{c+1}".to_sym   # Top-right
+          v3_id = "v_#{r+1}_#{c+1}".to_sym # Bottom-right
+          v4_id = "v_#{r+1}_#{c}".to_sym   # Bottom-left
+
+          piece_v_ids = [v1_id, v2_id, v3_id, v4_id]
+          piece_e = [
+            [v1_id, v2_id], [v2_id, v3_id], [v3_id, v4_id], [v4_id, v1_id]
+          ].map { |edge| edge.sort } # Ensure edges are sorted for QuiltPiece if it expects that
+
+          # Simple alternating color for testing
+          color = (r + c).even? ? [200, 200, 200] : [100, 100, 100]
+
+          graph_faces[face_id] = QuiltGraph::QuiltPiece.new(
+            id: face_id,
+            vertices: piece_v_ids,
+            edges: piece_e,
+            color: color
+          )
+        end
+      end
+      { vertices: graph_vertices, faces: graph_faces }
+    end
+
+    context 'with many pieces (e.g., 3x3 grid)' do
+      let(:rows) { 3 }
+      let(:cols) { 3 }
+      let(:piece_size) { 20.0 }
+      let(:many_pieces_graph) { generate_grid_graph(rows, cols, piece_size) }
+
+      subject { QuiltGraph.graph_to_svg_string(many_pieces_graph) }
+
+      it 'renders all piece polygons' do
+        expect(subject.scan(/<polygon/).count).to eq(rows * cols)
+      end
+
+      it 'renders all vertices as circles on top' do
+        num_vertices = (rows + 1) * (cols + 1)
+        expect(subject.scan(/<circle/).count).to eq(num_vertices)
+
+        # Check ordering: last piece element before first circle
+        last_poly_start = subject.rindex("<polygon")
+        first_circle_start = subject.index("<circle")
+        expect(last_poly_start).not_to be_nil
+        expect(first_circle_start).not_to be_nil
+
+        last_poly_end = subject.index(">", last_poly_start)
+        expect(last_poly_end).not_to be_nil
+        expect(last_poly_end).to be < first_circle_start
+      end
+
+      it 'calculates a reasonable viewBox for many pieces' do
+        # Max x = cols * piece_size = 3 * 20 = 60
+        # Max y = rows * piece_size = 3 * 20 = 60
+        # Min x, y = 0. Pad = 10.
+        # vb_x = 0 - 10 = -10
+        # vb_y = 0 - 10 = -10
+        # vb_width = (60 - 0) + 2*10 = 80
+        # vb_height = (60 - 0) + 2*10 = 80
+        expect(subject).to match(/viewBox="-10\.0 -10\.0 80\.0 80\.0"/)
+      end
+    end
+
+    context 'with complex adjacency (shared edge)' do
+      # P1: v1-v2-v3 (triangle), P2: v2-v1-v4 (triangle, v1-v2 is shared)
+      let(:shared_edge_vertices) do
+        {
+          v1: [0.0, 0.0], v2: [100.0, 0.0], v3: [50.0, 50.0], v4: [50.0, -50.0]
+        }
+      end
+      let(:p1) do
+        QuiltGraph::QuiltPiece.new(id: :P1, vertices: [:v1, :v2, :v3], edges: [[:v1,:v2],[:v2,:v3],[:v3,:v1]].map(&:sort), color: [255,0,0])
+      end
+      let(:p2) do
+        QuiltGraph::QuiltPiece.new(id: :P2, vertices: [:v2, :v1, :v4], edges: [[:v2,:v1],[:v1,:v4],[:v4,:v2]].map(&:sort), color: [0,0,255])
+      end
+      let(:shared_edge_graph) do
+        { vertices: shared_edge_vertices, faces: { p1: p1, p2: p2 } }
+      end
+
+      subject { QuiltGraph.graph_to_svg_string(shared_edge_graph) }
+
+      it 'renders both pieces' do
+        expect(subject).to include('points="0.0,0.0 100.0,0.0 50.0,50.0" fill="rgb(255,0,0)"') # P1
+        expect(subject).to include('points="100.0,0.0 0.0,0.0 50.0,-50.0" fill="rgb(0,0,255)"') # P2
+      end
+
+      it 'renders the shared edge line twice (once for each piece)' do
+        # Edge v1-v2 is (0,0) to (100,0)
+        # Need to be careful with string matching if attributes are ordered differently or spacing varies.
+        # A more robust regex might be needed if this is fragile.
+        # Example: /<line x1="0(\.0)?" y1="0(\.0)?" x2="100(\.0)?" y2="0(\.0)?" \/>/
+        # For now, simple string match.
+        line_v1_v2_1 = 'x1="0.0" y1="0.0" x2="100.0" y2="0.0"' # From P1 (v1,v2)
+        line_v1_v2_2 = 'x1="100.0" y1="0.0" x2="0.0" y2="0.0"' # From P2 (v2,v1)
+
+        # Count occurrences that match either direction of the shared edge.
+        # The QuiltPiece#to_svg does not sort vertices within an edge when rendering,
+        # it uses the order from the piece's edge list.
+        # P1 edges: [[:v1,:v2], ...] -> line for v1-v2
+        # P2 edges: [[:v2,:v1], ...] -> line for v2-v1 (same geometric line, different x1/y1,x2/y2)
+
+        count = subject.scan(/<line #{Regexp.escape(line_v1_v2_1)}|<line #{Regexp.escape(line_v1_v2_2)}/).count
+        expect(count).to eq(2)
+      end
+    end
+
+    context 'with disconnected components' do
+      let(:comp1_verts) { { c1v1: [0,0], c1v2: [10,0], c1v3: [5,10] } }
+      let(:comp1_piece) { QuiltGraph::QuiltPiece.new(id: :C1P1, vertices: [:c1v1,:c1v2,:c1v3], edges: [[:c1v1,:c1v2],[:c1v2,:c1v3],[:c1v3,:c1v1]].map(&:sort), color: [255,0,0])}
+
+      let(:comp2_verts) { { c2v1: [100,100], c2v2: [110,100], c2v3: [105,110] } }
+      let(:comp2_piece) { QuiltGraph::QuiltPiece.new(id: :C2P1, vertices: [:c2v1,:c2v2,:c2v3], edges: [[:c2v1,:c2v2],[:c2v2,:c2v3],[:c2v3,:c2v1]].map(&:sort), color: [0,0,255])}
+
+      let(:disconnected_graph) do
+        {
+          vertices: comp1_verts.merge(comp2_verts),
+          faces: { c1p1: comp1_piece, c2p1: comp2_piece }
+        }
+      end
+      subject { QuiltGraph.graph_to_svg_string(disconnected_graph) }
+
+      it 'renders polygons from all disconnected components' do
+        expect(subject).to include('points="0,0 10,0 5,10" fill="rgb(255,0,0)"') # Comp1
+        expect(subject).to include('points="100,100 110,100 105,110" fill="rgb(0,0,255)"') # Comp2
+        expect(subject.scan(/<polygon/).count).to eq(2)
+      end
+
+      it 'renders vertices from all disconnected components' do
+        expect(subject).to include('<circle cx="0" cy="0" r="2"') # c1v1
+        expect(subject).to include('<circle cx="100" cy="100" r="2"') # c2v1
+        expect(subject.scan(/<circle/).count).to eq(comp1_verts.size + comp2_verts.size)
+      end
+
+      it 'calculates a viewBox that encompasses all components' do
+        # Min x=0, Max x=110. Min y=0, Max y=110. Pad=10.
+        # vb_x = 0-10 = -10
+        # vb_y = 0-10 = -10
+        # vb_width = (110-0)+20 = 130
+        # vb_height = (110-0)+20 = 130
+        expect(subject).to match(/viewBox="-10(\.0)? -10(\.0)? 130(\.0)? 130(\.0)?"/)
+      end
+    end
+
+    context 'with highly varied pieces (triangle, square, pentagon)' do
+      let(:all_varied_vertices) do
+        {
+          # Triangle
+          t1: [0,0], t2: [20,0], t3: [10,20],
+          # Square (offset)
+          s1: [30,0], s2: [50,0], s3: [50,20], s4: [30,20],
+          # Pentagon (further offset)
+          p1: [60,10], p2: [70,0], p3: [80,10], p4: [75,20], p5: [65,20]
+        }
+      end
+      let(:triangle) { QuiltGraph::QuiltPiece.new(id: :TRI, vertices: [:t1,:t2,:t3], edges: [[:t1,:t2],[:t2,:t3],[:t3,:t1]].map(&:sort), color: [255,0,0]) }
+      let(:square)   { QuiltGraph::QuiltPiece.new(id: :SQR, vertices: [:s1,:s2,:s3,:s4], edges: [[:s1,:s2],[:s2,:s3],[:s3,:s4],[:s4,:s1]].map(&:sort), color: [0,255,0]) }
+      let(:pentagon) { QuiltGraph::QuiltPiece.new(id: :PEN, vertices: [:p1,:p2,:p3,:p4,:p5], edges: [[:p1,:p2],[:p2,:p3],[:p3,:p4],[:p4,:p5],[:p5,:p1]].map(&:sort), color: [0,0,255]) }
+
+      let(:varied_pieces_graph) do
+        { vertices: all_varied_vertices, faces: { tri: triangle, sqr: square, pen: pentagon } }
+      end
+      subject { QuiltGraph.graph_to_svg_string(varied_pieces_graph) }
+
+      it 'renders all varied pieces with correct polygons and fills' do
+        expect(subject).to include('points="0,0 20,0 10,20" fill="rgb(255,0,0)"') # Triangle
+        expect(subject).to include('points="30,0 50,0 50,20 30,20" fill="rgb(0,255,0)"') # Square
+        expect(subject).to include('points="60,10 70,0 80,10 75,20 65,20" fill="rgb(0,0,255)"') # Pentagon
+        expect(subject.scan(/<polygon/).count).to eq(3)
+      end
+
+      it 'renders all associated vertices correctly' do
+        expect(subject.scan(/<circle/).count).to eq(all_varied_vertices.size)
+        expect(subject).to include('<circle cx="0" cy="0" r="2"') # t1
+        expect(subject).to include('<circle cx="30" cy="0" r="2"') # s1
+        expect(subject).to include('<circle cx="60" cy="10" r="2"') # p1
+      end
+       it 'calculates a viewBox that encompasses all varied pieces' do
+        # Min x=0, Max x=80. Min y=0, Max y=20. Pad=10.
+        # vb_x = 0-10 = -10
+        # vb_y = 0-10 = -10
+        # vb_width = (80-0)+20 = 100
+        # vb_height = (20-0)+20 = 40
+        expect(subject).to match(/viewBox="-10(\.0)? -10(\.0)? 100(\.0)? 40(\.0)?"/)
+      end
+    end
   end
 
   # --- Other describe blocks from the original file ---
