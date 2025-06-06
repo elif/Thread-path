@@ -62,7 +62,7 @@ module PaletteQuantizer
 
 
   # Helper: Perform a BFS to find all pixels in a connected island of same color
-  def self.find_island(start_y, start_x, pixel_data, visited_mask, target_color, height, width)
+  def self.find_island(start_y, start_x, pixel_data, visited_mask, target_color, height, width, connectivity = 4)
     island_pixels = []
     q = [[start_y, start_x]] # Queue for BFS
 
@@ -78,7 +78,7 @@ module PaletteQuantizer
 
       island_pixels << [curr_y, curr_x]
 
-      get_neighbors(curr_y, curr_x, height, width).each do |ny, nx|
+      get_neighbors(curr_y, curr_x, height, width, connectivity).each do |ny, nx|
         if !visited_mask[ny][nx] && pixel_data[ny][nx] == target_color
           visited_mask[ny][nx] = true
           q.push([ny, nx])
@@ -88,7 +88,7 @@ module PaletteQuantizer
     island_pixels
   end
 
-  def self.remove_islands(input_pixel_data, island_depth, island_threshold, active_palette)
+  def self.remove_islands(input_pixel_data, island_depth, island_threshold, active_palette, connectivity = 4)
     return input_pixel_data if island_depth == 0 || island_threshold == 0
     return input_pixel_data if active_palette.nil? || active_palette.empty?
     return input_pixel_data if input_pixel_data.nil? || input_pixel_data.empty? || input_pixel_data[0].empty?
@@ -113,7 +113,7 @@ module PaletteQuantizer
 
           target_color = current_pixel_data[y][x]
           # Find all connected pixels of the same color (the island)
-          island_coords = find_island(y, x, current_pixel_data, visited_mask, target_color, height, width)
+          island_coords = find_island(y, x, current_pixel_data, visited_mask, target_color, height, width, connectivity)
 
           next if island_coords.empty? # Should not happen if logic is correct
 
@@ -123,7 +123,7 @@ module PaletteQuantizer
 
             # For each pixel in the island, find its neighbors that are NOT part of the island
             island_coords.each do |iy, ix|
-              get_neighbors(iy, ix, height, width).each do |ny, nx|
+              get_neighbors(iy, ix, height, width, connectivity).each do |ny, nx|
                 # Check if neighbor is outside the current island
                 # This check is tricky: find_island already identified all island pixels.
                 # So, if current_pixel_data[ny][nx] != target_color, it's an external neighbor.
