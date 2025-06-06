@@ -194,7 +194,7 @@ post '/palette_upload' do
 
     # Convert final palette to hex strings for JSON response
     output_hex_colors = final_palette_chunky_colors.map do |color|
-      ChunkyPNG::Color.to_hex_string(color, false) # false for #RRGGBB
+      ChunkyPNG::Color.to_hex(color, false) # false for #RRGGBB
     end
 
     # Integrate with PaletteManager (using the new final hex colors)
