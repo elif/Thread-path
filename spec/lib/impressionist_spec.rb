@@ -455,12 +455,13 @@ RSpec.describe Impressionist do
     # avg_colors from Impressionist.process_image is 1-indexed for blobs, index 0 is placeholder.
     let(:extract_palette_from_result) do
       lambda { |result|
-        raw_palette = result[:avg_colors]
+        # Correctly access avg_colors from the nested :segmentation_result for :chunky_png implementation
+        raw_palette = result.dig(:segmentation_result, :avg_colors)
         # Ensure raw_palette is not nil and is an array before calling drop
         return [] unless raw_palette.is_a?(Array)
         # Drop index 0 (placeholder), remove nils, keep unique, remove explicit transparent if any survived.
         palette = raw_palette.drop(1).compact.uniq
-        palette.reject! { |c| c == ChunkyPNG::Color::TRANSPARENT } # Should not be strictly necessary if drop(1) handles it
+        palette.reject! { |c| c == ChunkyPNG::Color::TRANSPARENT }
         palette
       }
     end
@@ -481,8 +482,15 @@ RSpec.describe Impressionist do
         expected_colors_chunky = expected_colors_hex.map { |hex| hex_to_color(hex) }
 
         expected_colors_chunky.each do |expected_color|
-          found_match = extracted_palette.any? { |actual_color| rgb_distance(expected_color, actual_color) < color_similarity_threshold }
-          expect(found_match).to be true, "Expected to find a color similar to #{ChunkyPNG::Color.to_hex(expected_color)} in palette: #{extracted_palette.map{|c| ChunkyPNG::Color.to_hex(c)}.join(', ')}"
+          palette_contains_color = false
+          extracted_palette.each do |actual_color|
+            distance = self.rgb_distance(expected_color, actual_color)
+            if distance < color_similarity_threshold
+              palette_contains_color = true
+              break
+            end
+          end
+          expect(palette_contains_color).to be true, "Expected to find a color similar to #{ChunkyPNG::Color.to_hex(expected_color)} in palette: #{extracted_palette.map{|c| ChunkyPNG::Color.to_hex(c)}.join(', ')}"
         end
       end
     end
