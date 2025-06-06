@@ -157,9 +157,9 @@ post '/palette_upload' do
     blob_sizes_map = impressionist_result[:blob_sizes] # 1-indexed
     blob_count = impressionist_result[:blob_count]
 
-    MAX_PALETTE_SIZE = 10
-    COLOR_SIMILARITY_THRESHOLD = 50 # Max RGB distance to be considered "different"
-    MIN_CANDIDATE_BLOB_SIZE = 10    # Absolute minimum size for a blob to be considered
+    max_palette_size = 10
+    color_similarity_threshold = 50 # Max RGB distance to be considered "different"
+    min_candidate_blob_size = 10    # Absolute minimum size for a blob to be considered
 
     candidates = []
     if raw_avg_colors && blob_sizes_map && blob_count > 0
@@ -174,7 +174,7 @@ post '/palette_upload' do
     end
 
     # Filter out initial tiny noise
-    candidates.reject! { |c| c[:size] < MIN_CANDIDATE_BLOB_SIZE }
+    candidates.reject! { |c| c[:size] < min_candidate_blob_size }
 
     # Sort candidates: primarily by size (descending)
     candidates.sort_by! { |c| -c[:size] }
@@ -183,13 +183,13 @@ post '/palette_upload' do
     final_palette_chunky_colors = []
     candidates.each do |candidate|
       is_too_similar = final_palette_chunky_colors.any? do |existing_color|
-        rgb_distance(candidate[:color], existing_color) < COLOR_SIMILARITY_THRESHOLD
+        rgb_distance(candidate[:color], existing_color) < color_similarity_threshold
       end
 
       unless is_too_similar
         final_palette_chunky_colors << candidate[:color]
       end
-      break if final_palette_chunky_colors.length >= MAX_PALETTE_SIZE
+      break if final_palette_chunky_colors.length >= max_palette_size
     end
 
     # Convert final palette to hex strings for JSON response

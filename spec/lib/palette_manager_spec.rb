@@ -7,7 +7,7 @@ require_relative '../../lib/palette_manager'
 # or that internal image processing is mocked.
 
 RSpec.describe PaletteManager do
-  let(:fixture_dir) { File.expand_path('../../fixtures', __FILE__) }
+  let(:fixture_dir) { File.expand_path('../fixtures', __dir__) }
   let(:sample_palette_image_path) { File.join(fixture_dir, 'sample_palette.png') } # Assume this exists or will be created
   let(:empty_image_path) { File.join(fixture_dir, 'empty_image.png') } # Assume this exists
 

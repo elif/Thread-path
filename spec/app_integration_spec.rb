@@ -51,7 +51,7 @@ RSpec.describe 'Application Integration Workflow' do
 
     it "clears the session" do
       # Set some dummy session data by starting a workflow
-      post '/step1', image: Rack::Test::UploadedFile.new(File.expand_path('../fixtures/test_image.png', __FILE__), 'image/png', true)
+      post '/step1', image: Rack::Test::UploadedFile.new(File.expand_path('fixtures/test_image.png', __dir__), 'image/png', true)
       expect(current_session_id).not_to be_nil
       first_sid = current_session_id
 
@@ -60,7 +60,7 @@ RSpec.describe 'Application Integration Workflow' do
 
       # After session.clear, the next request that tries to establish a session will create a new one.
       # So, we make another request that would initiate a session to check if the ID is different.
-      post '/step1', image: Rack::Test::UploadedFile.new(File.expand_path('../fixtures/test_image.png', __FILE__), 'image/png', true)
+      post '/step1', image: Rack::Test::UploadedFile.new(File.expand_path('fixtures/test_image.png', __dir__), 'image/png', true)
       new_sid = current_session_id
       expect(new_sid).not_to be_nil
       expect(new_sid).not_to eq(first_sid)
@@ -180,7 +180,7 @@ RSpec.describe 'Application Integration Workflow' do
 
   describe 'POST /palette_upload' do
     # Use the test_image.png created in before(:all) as it's simple but guaranteed to exist
-    let(:image_path) { File.expand_path('../fixtures/test_image.png', __dir__) }
+    let(:image_path) { File.expand_path('fixtures/test_image.png', __dir__) }
     let(:uploaded_file) { Rack::Test::UploadedFile.new(image_path, 'image/png', true) } # binary mode true
 
     context 'when a valid image is uploaded' do
@@ -260,7 +260,7 @@ RSpec.describe 'Application Integration Workflow' do
 
     context 'when an invalid file type is uploaded' do
       let(:non_image_file_path) do
-        path = File.expand_path('../fixtures/not_an_image.txt', __dir__)
+        path = File.expand_path('fixtures/not_an_image.txt', __dir__)
         File.write(path, "This is not an image.")
         path
       end
@@ -287,7 +287,7 @@ RSpec.describe 'Application Integration Workflow' do
     end
 
     context 'when fixture_distinct_colors.png is uploaded' do
-      let(:distinct_colors_image_path) { File.expand_path('../fixtures/fixture_distinct_colors.png', __dir__) }
+      let(:distinct_colors_image_path) { File.expand_path('fixtures/fixture_distinct_colors.png', __dir__) }
       let(:uploaded_distinct_colors_file) { Rack::Test::UploadedFile.new(distinct_colors_image_path, 'image/png', true) }
 
       before do

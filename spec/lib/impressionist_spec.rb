@@ -39,20 +39,20 @@ module Impressionist
 end
 
 RSpec.describe Impressionist do
-  let(:fixture_dir) { File.expand_path('../../fixtures', __FILE__) }
+  let(:fixture_dir) { File.expand_path('../fixtures', __dir__) }
   let(:input_path) { File.join(fixture_dir, 'test_image.png') }
   let(:output_dir) { File.expand_path('../../../tmp/test_output', __FILE__) }
   let(:output_path) { File.join(output_dir, 'output_impressionist.png') }
 
   before(:all) do
-    fixture_png_path = File.join(File.expand_path('../../fixtures', __FILE__), 'test_image.png')
+    fixture_png_path = File.join(File.expand_path('../fixtures', __dir__), 'test_image.png')
     unless File.exist?(fixture_png_path)
       FileUtils.mkdir_p(File.dirname(fixture_png_path))
       File.open(fixture_png_path, 'wb') do |f|
         f.write(Base64.decode64('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='))
       end
     end
-    sample_png_path = File.join(File.expand_path('../../fixtures', __FILE__), 'sample_image.png')
+    sample_png_path = File.join(File.expand_path('../fixtures', __dir__), 'sample_image.png')
     unless File.exist?(sample_png_path)
       FileUtils.mkdir_p(File.dirname(sample_png_path))
       img = ChunkyPNG::Image.new(5, 5, ChunkyPNG::Color::WHITE)
@@ -482,7 +482,7 @@ RSpec.describe Impressionist do
 
         expected_colors_chunky.each do |expected_color|
           found_match = extracted_palette.any? { |actual_color| rgb_distance(expected_color, actual_color) < color_similarity_threshold }
-          expect(found_match).to be true, "Expected to find a color similar to #{ChunkyPNG::Color.to_hex_string(expected_color)} in palette: #{extracted_palette.map{|c| ChunkyPNG::Color.to_hex_string(c)}.join(', ')}"
+          expect(found_match).to be true, "Expected to find a color similar to #{ChunkyPNG::Color.to_hex(expected_color)} in palette: #{extracted_palette.map{|c| ChunkyPNG::Color.to_hex(c)}.join(', ')}"
         end
       end
     end
@@ -554,14 +554,14 @@ RSpec.describe Impressionist do
         spot_blue_hex = '#3232dc' # rgb(50, 50, 220) -> quant(32) -> rgb(32, 32, 224)
 
         # Quantized expected spot colors
-        quantized_spot_red = hex_to_color(ChunkyPNG::Color.to_hex_string(ChunkyPNG::Color.rgb((220/32)*32, (50/32)*32, (50/32)*32), false))
-        quantized_spot_blue = hex_to_color(ChunkyPNG::Color.to_hex_string(ChunkyPNG::Color.rgb((50/32)*32, (50/32)*32, (220/32)*32), false))
+        quantized_spot_red = hex_to_color(ChunkyPNG::Color.to_hex(ChunkyPNG::Color.rgb((220/32)*32, (50/32)*32, (50/32)*32), false))
+        quantized_spot_blue = hex_to_color(ChunkyPNG::Color.to_hex(ChunkyPNG::Color.rgb((50/32)*32, (50/32)*32, (220/32)*32), false))
 
         found_spot_red = extracted_palette.any? { |actual_color| rgb_distance(quantized_spot_red, actual_color) < color_similarity_threshold }
         found_spot_blue = extracted_palette.any? { |actual_color| rgb_distance(quantized_spot_blue, actual_color) < color_similarity_threshold }
 
-        expect(found_spot_red).to be false, "Red spot color was found, but expected to be filtered by min_blob_size. Palette: #{extracted_palette.map{|c| ChunkyPNG::Color.to_hex_string(c)}.join(', ')}"
-        expect(found_spot_blue).to be false, "Blue spot color was found, but expected to be filtered by min_blob_size. Palette: #{extracted_palette.map{|c| ChunkyPNG::Color.to_hex_string(c)}.join(', ')}"
+        expect(found_spot_red).to be false, "Red spot color was found, but expected to be filtered by min_blob_size. Palette: #{extracted_palette.map{|c| ChunkyPNG::Color.to_hex(c)}.join(', ')}"
+        expect(found_spot_blue).to be false, "Blue spot color was found, but expected to be filtered by min_blob_size. Palette: #{extracted_palette.map{|c| ChunkyPNG::Color.to_hex(c)}.join(', ')}"
       end
     end
   end
