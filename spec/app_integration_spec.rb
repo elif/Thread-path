@@ -98,7 +98,7 @@ RSpec.describe 'Application Integration Workflow' do
       session_path = File.join(TMP_DIR_BASE, expected_test_sid)
       expect(File).to exist(File.join(session_path, 'original.png')), "original.png not found in #{session_path}"
       expect(File).to exist(File.join(session_path, 'step1.png')), "step1.png not found in #{session_path}"
-      expect(File).to exist(File.join(session_path, 'labels.dat')), "labels.dat not found in #{session_path}"
+      # labels.dat is no longer saved as a file, data is in session[:image_context][:segmentation_data]
       expect(last_response.body).to include("/tmp/#{expected_test_sid}/step1.png") # App should use this SID in response
 
       # Step 2: POST /step2
@@ -291,6 +291,7 @@ RSpec.describe 'Application Integration Workflow' do
       let(:uploaded_distinct_colors_file) { Rack::Test::UploadedFile.new(distinct_colors_image_path, 'image/png', true) }
 
       before do
+        get '/' # Initialize session, clear if any old one, ensure test_fixture_uid logic can prime
         post '/palette_upload', { palette_image: uploaded_distinct_colors_file }
       end
 

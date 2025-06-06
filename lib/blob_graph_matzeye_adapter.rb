@@ -2,20 +2,24 @@ require_relative 'matzeye' # Corrected path
 require 'set'            # For Set data structure if used in adapter logic
 
 module BlobGraph
-  module MatzEyeAdapter # Renamed from MatzEye (which was previously OpenCV)
+  module MatzEyeAdapter
     class << self
-      def extract_from_labels(labels_array, options)
-        # Input: labels_array (2D Array of Integers from Impressionist)
-        # Output: Hash { vertices: vertices_hash, edges: edges_list, detailed_edges: detailed_edges_list }
+      def extract_from_labels(segmentation_data, options) # Parameter is segmentation_data hash
+        # Extract the actual 2D labels array and dimensions from segmentation_data
+        actual_labels_array = segmentation_data[:labels]
 
-        return { vertices: {}, edges: [], detailed_edges: [] } if labels_array.empty? || labels_array.first.empty?
+        # Ensure actual_labels_array is valid before proceeding
+        if actual_labels_array.nil? || !actual_labels_array.is_a?(Array) || actual_labels_array.empty? ||
+           !actual_labels_array.first.is_a?(Array) || actual_labels_array.first.empty?
+          return { vertices: {}, edges: [], detailed_edges: [] }
+        end
 
-        height = labels_array.size
-        width = labels_array.first.size
+        height = actual_labels_array.size
+        width = actual_labels_array.first.size
 
         # 1. Detect Junction Pixels & Get Contributing Blob Sets
         junction_pixel_mask_array, pixel_to_blob_sets_hash =
-          ::MatzEye.detect_junction_pixels(labels_array, width, height)
+          ::MatzEye.detect_junction_pixels(actual_labels_array, width, height) # Pass the actual 2D array
 
         # 2. Cluster Junction Pixels
         connectivity = options.fetch(:junction_conn, 8) == 8 ? 8 : 4

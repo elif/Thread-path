@@ -1,6 +1,26 @@
 require 'sinatra'
 require 'securerandom'
+
+# Force disable static files and set a safe public_folder for test environment very early
+if ENV['RACK_ENV'] == 'test'
+  # Attempt to remove Rack::Static from the middleware stack if it was added by default.
+  # This is necessary because classic Sinatra apps add it early.
+  if defined?(Rack::Static) && Sinatra::Application.middleware.any? { |m| m.first == Rack::Static }
+    Sinatra::Application.middleware.delete_if { |m| m.first == Rack::Static }
+  end
+  Sinatra::Application.disable :static # Should prevent re-adding or using it
+  Sinatra::Application.settings.public_folder = File.expand_path('public_test_files_safe_location', __dir__)
+end
+
 require 'fileutils'
+
+# Before filter to catch path traversal attempts for /tmp/ routes
+before '/tmp/*' do
+  if request.path_info.to_s.include?('..')
+    halt 404, "Path traversal attempt detected in before filter."
+  end
+end
+
 require 'json'
 require_relative 'lib/impressionist'
 require_relative 'lib/blob_graph'
@@ -14,8 +34,7 @@ set :port, 4567
 # Configuration for test environment
 configure :test do
   set :protection, false
-  set :static, false
-  set :public_folder, File.expand_path('non_existent_public_folder_for_test', __dir__)
+  # :static and :public_folder are now set at the very top for test env
 end
 
 TMP_DIR = File.expand_path('tmp', __dir__)
@@ -72,24 +91,33 @@ helpers do
   public # Make sure other helpers are public if used directly in routes/views
 
   # Create (or retrieve) a unique working directory for this session
-  def session_dir
-    if ENV['RACK_ENV'] == 'test'
-      session[:uid] = "test_fixture_uid"
-    else
-      session[:uid] ||= SecureRandom.uuid
-    end
-    dir = File.join(TMP_DIR, session[:uid])
-    FileUtils.mkdir_p(dir) unless Dir.exist?(dir)
-    dir
+  # Returns the directory path and the UID used.
+  def session_dir_and_uid
+    current_uid = if settings.test? # Use Sinatra's setting to check for test environment
+                    "test_fixture_uid"
+                  else
+                    session[:uid] || SecureRandom.uuid # Use existing or generate new
+                  end
+    session[:uid] = current_uid # Ensure this UID is stored in the session
+
+    dir_path = File.join(TMP_DIR, current_uid)
+    FileUtils.mkdir_p(dir_path) unless Dir.exist?(dir_path)
+    [dir_path, current_uid] # Return both path and UID
   end
 
-  # Paths within session_dir
-  def path_step1_png;        File.join(session_dir, 'step1.png');        end
-  # path_labels_dat and path_avg_colors_dat are removed
-  def path_step2_svg;        File.join(session_dir, 'step2_graph.svg');  end
-  def path_final_svg;        File.join(session_dir, 'final_quilt.svg');  end
-
-  # Removed load_labels, save_labels, load_avg_colors, save_avg_colors
+  # Paths within session_dir (now use the helper that provides the path)
+  def path_step1_png
+    s_dir, _ = session_dir_and_uid
+    File.join(s_dir, 'step1.png')
+  end
+  def path_step2_svg
+    s_dir, _ = session_dir_and_uid
+    File.join(s_dir, 'step2_graph.svg')
+  end
+  def path_final_svg
+    s_dir, _ = session_dir_and_uid
+    File.join(s_dir, 'final_quilt.svg')
+  end
 
   # Render an SVG string inline (embed directly)
   def inline_svg_tag(svg_content)
@@ -122,51 +150,51 @@ post '/palette_upload' do
     return { status: 'error', message: 'No palette_image uploaded' }.to_json
   end
 
-  s_dir = session_dir
-  # Ensure session_dir itself doesn't make it into the publicly accessible path
-  # if we decide to use part of s_dir in the response.
-  # For now, we use the full path as per requirements, but this might be a security concern
-  # if TMP_DIR is directly served. The /tmp/:sid/:file route seems to handle this safely.
+  s_dir, current_session_uid = session_dir_and_uid # Get path and the UID determined by the helper
 
   destination_filename = 'palette_source.png'
   destination_path = File.join(s_dir, destination_filename)
 
   begin
     FileUtils.copy_file(tempfile.path, destination_path)
-    # The requirement is to return the full path, which includes the session ID.
-    # Example: /tmp/session_id/palette_source.png
-    # The actual TMP_DIR is not part of the URL directly, but the /tmp/:sid/:file route constructs it.
-    # So, the image_path should align with how that route would serve it.
-    image_path_for_client = "/tmp/#{session[:uid]}/#{destination_filename}"
+    image_path_for_client = "/tmp/#{current_session_uid}/#{destination_filename}" # Use UID from helper
 
     # Load the image with ChunkyPNG
     palette_image_obj = ChunkyPNG::Image.from_file(destination_path)
 
     # Process the image with Impressionist
     impressionist_options = {
-      quant_interval: 32,
-      blur: true,
+      quant_interval: 1, # Set to minimum for maximum color detail
+      blur: false,
       blur_radius: 1,
-      min_blob_size: 20, # Lowered min_blob_size for Impressionist
+      min_blob_size: 10,
       implementation: :chunky_png
     }
     impressionist_result = Impressionist.process(palette_image_obj, impressionist_options)
 
     # Refined Palette Extraction Logic
-    raw_avg_colors = impressionist_result[:avg_colors] # 1-indexed, 0 is placeholder
-    blob_sizes_map = impressionist_result[:blob_sizes] # 1-indexed
-    blob_count = impressionist_result[:blob_count]
+    segmentation_data = impressionist_result[:segmentation_result]
+    if segmentation_data.nil?
+      # Handle cases where segmentation_result might be unexpectedly nil
+      logger.error "Error in /palette_upload: :segmentation_result is nil from Impressionist.process"
+      raw_avg_colors = nil
+      blob_sizes_map = nil
+      blob_count = 0
+    else
+      raw_avg_colors = segmentation_data[:avg_colors]
+      blob_sizes_map = segmentation_data[:blob_sizes]
+      blob_count = segmentation_data[:blob_count]
+    end
 
     max_palette_size = 10
     color_similarity_threshold = 50 # Max RGB distance to be considered "different"
     min_candidate_blob_size = 10    # Absolute minimum size for a blob to be considered
 
     candidates = []
-    if raw_avg_colors && blob_sizes_map && blob_count > 0
+    if raw_avg_colors && blob_sizes_map && blob_count && blob_count > 0
       (1..blob_count).each do |blob_id|
         color = raw_avg_colors[blob_id]
         size = blob_sizes_map[blob_id]
-        # Ensure color and size are valid, and color is not fully transparent
         if color && size && !(ChunkyPNG::Color.a(color) == 0 && color != ChunkyPNG::Color::TRANSPARENT) && color != ChunkyPNG::Color::TRANSPARENT
           candidates << { color: color, size: size, id: blob_id }
         end
@@ -418,7 +446,8 @@ post '/step1' do
     halt 400, "No image uploaded"
   end
 
-  orig_path = File.join(session_dir, 'original.png')
+  s_dir_step1, session_uid_step1 = session_dir_and_uid
+  orig_path = File.join(s_dir_step1, 'original.png')
   FileUtils.copy_file(tempfile.path, orig_path)
 
   # Parse options using helper
@@ -432,7 +461,7 @@ post '/step1' do
   processed_image.save(path_step1_png)
 
   # Store relevant data in session
-  session[:image_context] = {
+  session[:image_context] = { # Session still used for other data
     segmentation_data: impressionist_result[:segmentation_result],
     image_attributes: impressionist_result[:image_attributes]
   }
@@ -452,7 +481,7 @@ post '/step1' do
     <body>
       <h2>Step 2: Blob‐Adjacency Graph Extraction</h2>
       <p>Below is the recolored “blob” image from Step 1:</p>
-      <img src="/tmp/#{session[:uid]}/step1.png" style="max-width:100%;border:1px solid #ccc;">
+      <img src="/tmp/#{session_uid_step1}/step1.png" style="max-width:100%;border:1px solid #ccc;">
       <h3>Configure Graph Extraction Options</h3>
       <form action="/step2" method="POST">
         <label>
@@ -604,13 +633,21 @@ get '/download_final' do
 end
 
 # ----------------------------------------------------------------------------
-set :static, true
-set :public_folder, File.dirname(__FILE__)
+# Configure static file serving. Crucially, for test env, public_folder must not be app root.
+if ENV['RACK_ENV'] != 'test'
+  set :static, true
+  set :public_folder, File.dirname(__FILE__) # This is /app
+else
+  # For test environment, :static should already be disabled earlier.
+  # Setting public_folder to a safe, non-app-root directory as an additional measure.
+  set :public_folder, File.expand_path('public_test_files_safe_location', __dir__)
+  # We ensure :static is false for tests at the top of the file.
+end
 
 get '/tmp/:sid/:file' do |sid, file|
   safe_sid = sid.gsub(/[^a-zA-Z0-9_-]/, "")
   if file.include?('..') || file.start_with?('/')
-    error 404, "Invalid path due to '..' or leading '/'."
+    halt 404, "Invalid path due to '..' or leading '/'."
   end
   safe_file = file.gsub(/[^a-zA-Z0-9_.-]/, "")
   halt 404, "Invalid characters in path" if safe_sid != sid || safe_file != file
