@@ -174,21 +174,36 @@ RSpec.describe PaletteQuantizer do
     # - Test interaction with the active_palette (e.g., replacement color must be from palette). (Covered by choosing from active_palette)
 
     it 'tests island identification (implicitly via find_island)' do
-      # This test is effectively covered by the successful execution of remove_islands tests
-      # that rely on find_island. If find_island was broken, those would fail.
-      # No direct assertion needed here if other tests pass.
-      expect(true).to be true # Placeholder, real test is implicit
+      pixel_data = [
+        [red, green],
+        [blue, green]
+      ]
+      result = PaletteQuantizer.remove_islands(pixel_data.map(&:dup), 2, 1, sample_palette)
+      expected = [
+        [green, green],
+        [green, green]
+      ]
+      expect(result).to eq(expected)
     end
 
     it 'tests replacement color selection (implicitly by island removal outcomes)' do
-      # Similar to above, successful island removal tests validate this.
-      expect(true).to be true # Placeholder
+      pixel_data = [
+        [red, green],
+        [blue, green]
+      ]
+      result = PaletteQuantizer.remove_islands(pixel_data.map(&:dup), 2, 1, sample_palette)
+      expect(result[0][0]).to eq(green)
     end
 
     it 'tests depth iterations (implicitly by island removal outcomes or specific depth tests)' do
-      # Depth iterations can be tested by constructing scenarios where multiple passes are needed.
-      # For now, existing tests cover depth=1.
-      expect(true).to be true # Placeholder
+      pixel_data = [
+        [red, green],
+        [blue, green]
+      ]
+      result_depth1 = PaletteQuantizer.remove_islands(pixel_data.map(&:dup), 1, 1, sample_palette)
+      result_depth2 = PaletteQuantizer.remove_islands(pixel_data.map(&:dup), 2, 1, sample_palette)
+      expect(result_depth1).not_to eq(result_depth2)
+      expect(result_depth2).to eq([[green, green], [green, green]])
     end
 
     context 'with more complex island scenarios' do
