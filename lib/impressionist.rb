@@ -105,9 +105,9 @@ module Impressionist
       { labels: labels, blob_count: blob_count, blob_sizes: final_blob_sizes }
     end
 
-    def _calculate_average_colors(original_image, labels, blob_count)
-      width = original_image.width
-      height = original_image.height
+    def _calculate_average_colors(source_image_object, labels, blob_count, quant_interval)
+      width = source_image_object.width
+      height = source_image_object.height
       sums   = Array.new(blob_count + 1) { [0, 0, 0] }
       counts = Array.new(blob_count + 1, 0)
 
@@ -115,7 +115,7 @@ module Impressionist
         (0...width).each do |x|
           bid = labels[y][x]
           next if bid == 0
-          pixel = original_image[x, y]
+          pixel = source_image_object[x, y]
           sums[bid][0] += ChunkyPNG::Color.r(pixel)
           sums[bid][1] += ChunkyPNG::Color.g(pixel)
           sums[bid][2] += ChunkyPNG::Color.b(pixel)
@@ -130,7 +130,13 @@ module Impressionist
           r_avg = (sums[bid][0] / count.to_f).round
           g_avg = (sums[bid][1] / count.to_f).round
           b_avg = (sums[bid][2] / count.to_f).round
-          avg_color[bid] = ChunkyPNG::Color.rgba(r_avg, g_avg, b_avg, 255)
+
+          # Re-quantize the average color
+          rq_avg = (r_avg / quant_interval) * quant_interval
+          gq_avg = (g_avg / quant_interval) * quant_interval
+          bq_avg = (b_avg / quant_interval) * quant_interval
+
+          avg_color[bid] = ChunkyPNG::Color.rgba(rq_avg, gq_avg, bq_avg, 255)
         else
           # This case should ideally not happen if blob_count is accurate
           # and labels only contain bids up to blob_count.
@@ -174,7 +180,9 @@ module Impressionist
       blob_count = labeling_result[:blob_count]
       blob_sizes_map = labeling_result[:blob_sizes]
 
-      avg_colors_map = _calculate_average_colors(img, labels, blob_count)
+      # Use blurred_img for color averaging if blur was applied, else original img
+      source_for_avg_color = do_blur ? blurred_img : img
+      avg_colors_map = _calculate_average_colors(source_for_avg_color, labels, blob_count, quant_interval)
 
       output_image = _build_recolored_image(width, height, labels, avg_colors_map)
 
